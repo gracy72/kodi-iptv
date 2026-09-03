@@ -8,12 +8,6 @@ import aiohttp
 INDEKSY_ZRODEL = [
     "https://iptv-org.github.io/iptv/languages/pol.m3u",
     "https://iptv-org.github.io/iptv/countries/pl.m3u",
-    "https://iptv-org.github.io/iptv/categories/news.m3u",
-    "https://iptv-org.github.io/iptv/categories/movies.m3u",
-    "https://iptv-org.github.io/iptv/categories/music.m3u",
-    "https://iptv-org.github.io/iptv/categories/sports.m3u",
-    "https://iptv-org.github.io/iptv/categories/general.m3u",
-    "https://iptv-org.github.io/iptv/categories/entertainment.m3u",
     "https://raw.githubusercontent.com/free-tv/IPTV/master/playlist/poland.m3u",
 ]
 
