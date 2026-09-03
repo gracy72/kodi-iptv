@@ -4,10 +4,20 @@ import re
 import urllib.request
 import xml.etree.ElementTree as ET
 
-# Lista adresów M3U do pobrania i połączenia
-M3U_URLS = [
-    "https://iptv-org.github.io/iptv/languages/pol.m3u",  # Język polski
-    "https://iptv-org.github.io/iptv/countries/pl.m3u",  # Region: Polska
+# Główne polskie źródła M3U
+ZRODLA_POLSKIE = [
+    "https://iptv-org.github.io/iptv/languages/pol.m3u",
+    "https://iptv-org.github.io/iptv/countries/pl.m3u",
+]
+
+# Międzynarodowe źródła kategoryczne (będą filtrowane pod kątem języka polskiego)
+ZRODLA_KATEGORYCZNE = [
+    "https://iptv-org.github.io/iptv/categories/news.m3u",
+    "https://iptv-org.github.io/iptv/categories/movies.m3u",
+    "https://iptv-org.github.io/iptv/categories/music.m3u",
+    "https://iptv-org.github.io/iptv/categories/general.m3u",
+    "https://iptv-org.github.io/iptv/categories/entertainment.m3u",
+    "https://iptv-org.github.io/iptv/categories/sports.m3u",
 ]
 
 EPG_URL = "https://epg.ovh/pl.xml"
@@ -17,14 +27,14 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Kodi/21.0"}
 
 
 def pobierz_dane(url: str) -> str:
-    """Pobiera zawartość tekstową ze wskazanego adresu URL."""
+    """Pobiera treść tekstową z podanego adresu URL."""
     req = urllib.request.Request(url, headers=HEADERS)
     with urllib.request.urlopen(req, timeout=15) as response:
         return response.read().decode("utf-8", errors="ignore")
 
 
 def normalizuj_nazwe(nazwa: str) -> str:
-    """Ujednolica nazwę kanału (usuwa frazy jakościowe, spacje i znaki specjalne)."""
+    """Czyszczenie nazwy kanału do porównania z bazą EPG."""
     if not nazwa:
         return ""
     nazwa = nazwa.lower()
@@ -38,7 +48,7 @@ def normalizuj_nazwe(nazwa: str) -> str:
 
 
 def spradz_czy_stream_dziala(url_streamu: str, timeout: float = 3.5) -> bool:
-    """Sprawdza, czy strumień wideo przesyła bajty danych w sieci."""
+    """Testuje połączenie ze strumieniem bez pobierania całego pliku."""
     try:
         req = urllib.request.Request(url_streamu, headers=HEADERS)
         req.add_header("Range", "bytes=0-1024")
@@ -76,7 +86,7 @@ def pobierz_baze_epg() -> dict[str, str]:
 def dopasuj_epg_fuzzy(
     nazwa_stacji: str, mapa_epg: dict[str, str], min_podobienstwo: float = 0.60
 ) -> str | None:
-    """Wyszukuje najbardziej prawdopodobne ID w bazie EPG na podstawie podobieństwa tekstu."""
+    """Szuka najbardziej prawdopodobnego ID w bazie EPG na podstawie podobieństwa tekstu."""
     norm_stacja = normalizuj_nazwe(nazwa_stacji)
     if not norm_stacja:
         return None
@@ -96,44 +106,79 @@ def dopasuj_epg_fuzzy(
     return najlepszy_id
 
 
+def czy_kanal_jest_polski(extinf: str, epg_id: str | None, z_polskiej_listy: bool) -> bool:
+    """Weryfikuje, czy dany kanał jest polskojęzyczny."""
+    # 1. Zawsze przepuszczamy kanały pochodzące bezpośrednio z polskich playlist
+    if z_polskiej_listy:
+        return True
+
+    extinf_lower = extinf.lower()
+
+    # 2. Sprawdzamy obecność polskich tagów językowych/krajowych w nagłówku M3U
+    if 'tvg-language="pol"' in extinf_lower or 'tvg-country="pl"' in extinf_lower:
+        return True
+
+    # 3. Jeśli kanał z listy kategorycznej pasuje do polskiego EPG z epg.ovh
+    if epg_id is not None:
+        return True
+
+    return False
+
+
 def przetworz_liste():
-    """Pobiera dane z wielu źródeł, usuwa duplikaty, weryfikuje połączenia i generuje M3U."""
+    """Główna funkcja: pobiera, filtruje, testuje i zapisuje M3U."""
     mapa_epg = pobierz_baze_epg()
 
     surowe_kanaly = []
     unikalne_urle = set()
 
-    print("2. Pobieranie i scalanie playlist z wielu źródeł...")
-    for zrodlo_url in M3U_URLS:
-        try:
-            m3u_text = pobierz_dane(zrodlo_url)
-            linie = m3u_text.splitlines()
+    print("2. Pobieranie i selekcja źródeł M3U...")
 
+    # Pobieranie polskich list (z oznaczeniem z_polskiej_listy = True)
+    for url in ZRODLA_POLSKIE:
+        try:
+            m3u_text = pobierz_dane(url)
+            linie = m3u_text.splitlines()
             i = 0
             while i < len(linie):
                 linia = linie[i].strip()
                 if linia.startswith("#EXTINF:"):
                     if i + 1 < len(linie) and not linie[i + 1].startswith("#"):
                         stream_url = linie[i + 1].strip()
-
-                        # Zapobieganie powielaniu tych samych linków transmisji
                         if stream_url not in unikalne_urle:
                             unikalne_urle.add(stream_url)
-                            surowe_kanaly.append((linia, stream_url))
+                            surowe_kanaly.append((linia, stream_url, True))
                         i += 1
                 i += 1
         except Exception as e:
-            print(f"   Pomijanie źródła {zrodlo_url} z powodu błędu: {e}")
+            print(f"   Błąd pobierania {url}: {e}")
 
-    print(
-        f"3. Testowanie sygnału dla {len(surowe_kanaly)} unikalnych strumieni..."
-    )
+    # Pobieranie list kategorycznych (z oznaczeniem z_polskiej_listy = False)
+    for url in ZRODLA_KATEGORYCZNE:
+        try:
+            m3u_text = pobierz_dane(url)
+            linie = m3u_text.splitlines()
+            i = 0
+            while i < len(linie):
+                linia = linie[i].strip()
+                if linia.startswith("#EXTINF:"):
+                    if i + 1 < len(linie) and not linie[i + 1].startswith("#"):
+                        stream_url = linie[i + 1].strip()
+                        if stream_url not in unikalne_urle:
+                            unikalne_urle.add(stream_url)
+                            surowe_kanaly.append((linia, stream_url, False))
+                        i += 1
+                i += 1
+        except Exception as e:
+            print(f"   Błąd pobierania {url}: {e}")
+
+    print(f"3. Testowanie sygnału dla {len(surowe_kanaly)} unikalnych stacji...")
     finalne_stacje = []
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
         testy = {
-            executor.submit(spradz_czy_stream_dziala, url): (extinf, url)
-            for extinf, url in surowe_kanaly
+            executor.submit(spradz_czy_stream_dziala, item[1]): item
+            for item in surowe_kanaly
         }
 
         przetworzone = 0
@@ -141,7 +186,7 @@ def przetworz_liste():
 
         for future in concurrent.futures.as_completed(testy):
             przetworzone += 1
-            extinf, url = testy[future]
+            extinf, stream_url, z_polskiej_listy = testy[future]
             dziala = future.result()
 
             nazwa_kanalu = extinf.rsplit(",", 1)[-1].strip()
@@ -151,17 +196,28 @@ def przetworz_liste():
                     nazwa_kanalu, mapa_epg, min_podobienstwo=0.60
                 )
 
-                if epg_id:
-                    if 'tvg-id="' in extinf:
-                        extinf = re.sub(
-                            r'tvg-id="[^"]*"', f'tvg-id="{epg_id}"', extinf
-                        )
-                    else:
-                        extinf = extinf.replace(
-                            "#EXTINF:-1", f'#EXTINF:-1 tvg-id="{epg_id}"'
-                        )
+                # KLUCZOWY FILTR JĘZYKOWY
+                if czy_kanal_jest_polski(extinf, epg_id, z_polskiej_listy):
+                    if epg_id:
+                        if 'tvg-id="' in extinf:
+                            extinf = re.sub(
+                                r'tvg-id="[^"]*"', f'tvg-id="{epg_id}"', extinf
+                            )
+                        else:
+                            extinf = extinf.replace(
+                                "#EXTINF:-1", f'#EXTINF:-1 tvg-id="{epg_id}"'
+                            )
 
-                finalne_stacje.append((extinf, url))
+                    finalne_stacje.append((extinf, stream_url))
+                    print(
+                        f"   [{przetworzone}/{lacznie}] [AKCEPTACJA PL]"
+                        f" {nazwa_kanalu}"
+                    )
+                else:
+                    print(
+                        f"   [{przetworzone}/{lacznie}] [ODRZUCENIE - NIE-PL]"
+                        f" {nazwa_kanalu}"
+                    )
 
     # Zapis wyniku do pliku M3U
     zapis_linie = ['#EXTM3U url-tvg="https://epg.ovh/pl.xml"']
@@ -173,8 +229,8 @@ def przetworz_liste():
         f.write("\n".join(zapis_linie))
 
     print(
-        f"\nZakończono! Zapisano {len(finalne_stacje)} działających stacji do"
-        f" {OUTPUT_FILE}"
+        f"\nZakończono! Zapisano {len(finalne_stacje)} działających polskich"
+        f" stacji do {OUTPUT_FILE}"
     )
 
 
