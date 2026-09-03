@@ -9,6 +9,7 @@ INDEKSY_ZRODEL = [
     "https://iptv-org.github.io/iptv/languages/pol.m3u",
     "https://iptv-org.github.io/iptv/countries/pl.m3u",
     "https://raw.githubusercontent.com/Free-TV/IPTV/refs/heads/master/playlists/playlist_poland.m3u8",
+    "https://raw.githubusercontent.com/Romaxa55/world_ip_tv/refs/heads/master/output/pl.m3u",
 ]
 
 EPG_URL = "https://epg.ovh/pl.xml"
