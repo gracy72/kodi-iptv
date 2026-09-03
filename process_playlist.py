@@ -8,7 +8,7 @@ import aiohttp
 INDEKSY_ZRODEL = [
     "https://iptv-org.github.io/iptv/languages/pol.m3u",
     "https://iptv-org.github.io/iptv/countries/pl.m3u",
-    "https://raw.githubusercontent.com/free-tv/IPTV/master/playlist/poland.m3u",
+    "https://raw.githubusercontent.com/Free-TV/IPTV/refs/heads/master/playlists/playlist_poland.m3u8",
 ]
 
 EPG_URL = "https://epg.ovh/pl.xml"
