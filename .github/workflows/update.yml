@@ -16,10 +16,13 @@ jobs:
       - name: Pobierz kod repozytorium
         uses: actions/checkout@v4.2.2
 
-      - name: Konfiguracja Python 3.12
+      - name: Konfiguracja Python 3.13
         uses: actions/setup-python@v5.3.0
         with:
-          python-version: '3.12'
+          python-version: '3.13'
+
+      - name: Instalacja wydajnych bibliotek asynchronicznych
+        run: pip install aiohttp
 
       - name: Uruchom skrypt process_playlist.py
         run: python process_playlist.py
