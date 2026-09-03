@@ -14,7 +14,7 @@ INDEKSY_ZRODEL = [
 ]
 
 EPG_URL = "https://epg.ovh/pl.xml"
-OUTPUT_FILE = "wszystkie_dzialajace_kodi.m3u"
+OUTPUT_FILE = "gracy.m3u"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Kodi/21.0"}
 
