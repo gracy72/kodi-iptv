@@ -4,8 +4,13 @@ import re
 import urllib.request
 import xml.etree.ElementTree as ET
 
-# Ustawienia ścieżek źródłowych i wyjściowych
-M3U_URL = "https://iptv-org.github.io/iptv/languages/pol.m3u"
+# Lista adresów M3U do pobrania i połączenia
+M3U_URLS = [
+    "https://iptv-org.github.io/iptv/languages/pol.m3u",  # Język polski
+    "https://iptv-org.github.io/iptv/countries/pl.m3u",  # Region: Polska
+    "https://iptv-org.github.io/iptv/categories/news.m3u",  # Kanały informacyjne
+]
+
 EPG_URL = "https://epg.ovh/pl.xml"
 OUTPUT_FILE = "wszystkie_dzialajace_kodi.m3u"
 
@@ -93,37 +98,50 @@ def dopasuj_epg_fuzzy(
 
 
 def przetworz_liste():
-    """Główna logika przetwarzania i generowania pliku wyjściowego."""
+    """Pobiera dane z wielu źródeł, usuwa duplikaty, weryfikuje połączenia i generuje M3U."""
     mapa_epg = pobierz_baze_epg()
 
-    print("2. Pobieranie listy M3U...")
-    try:
-        m3u_text = pobierz_dane(M3U_URL)
-        linie = m3u_text.splitlines()
-    except Exception as e:
-        print(f"   Błąd pobierania M3U: {e}")
-        return
+    surowe_kanaly = []
+    unikalne_urle = set()
 
-    kanaly = []
-    i = 0
-    while i < len(linie):
-        linia = linie[i].strip()
-        if linia.startswith("#EXTINF:"):
-            if i + 1 < len(linie) and not linie[i + 1].startswith("#"):
-                kanaly.append((linia, linie[i + 1].strip()))
+    print("2. Pobieranie i scalanie playlist z wielu źródeł...")
+    for zrodlo_url in M3U_URLS:
+        try:
+            m3u_text = pobierz_dane(zrodlo_url)
+            linie = m3u_text.splitlines()
+
+            i = 0
+            while i < len(linie):
+                linia = linie[i].strip()
+                if linia.startswith("#EXTINF:"):
+                    if i + 1 < len(linie) and not linie[i + 1].startswith("#"):
+                        stream_url = linie[i + 1].strip()
+
+                        # Zapobieganie powielaniu tych samych linków transmisji
+                        if stream_url not in unikalne_urle:
+                            unikalne_urle.add(stream_url)
+                            surowe_kanaly.append((linia, stream_url))
+                        i += 1
                 i += 1
-        i += 1
+        except Exception as e:
+            print(f"   Pomijanie źródła {zrodlo_url} z powodu błędu: {e}")
 
-    print(f"3. Testowanie sygnału dla {len(kanaly)} kanałów...")
+    print(
+        f"3. Testowanie sygnału dla {len(surowe_kanaly)} unikalnych strumieni..."
+    )
     finalne_stacje = []
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
         testy = {
             executor.submit(spradz_czy_stream_dziala, url): (extinf, url)
-            for extinf, url in kanaly
+            for extinf, url in surowe_kanaly
         }
 
+        przetworzone = 0
+        lacznie = len(surowe_kanaly)
+
         for future in concurrent.futures.as_completed(testy):
+            przetworzone += 1
             extinf, url = testy[future]
             dziala = future.result()
 
@@ -144,7 +162,6 @@ def przetworz_liste():
                             "#EXTINF:-1", f'#EXTINF:-1 tvg-id="{epg_id}"'
                         )
 
-                # Zachowujemy każdy działający strumień (z EPG lub bez)
                 finalne_stacje.append((extinf, url))
 
     # Zapis wyniku do pliku M3U
@@ -156,7 +173,10 @@ def przetworz_liste():
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(zapis_linie))
 
-    print(f"Zapisano {len(finalne_stacje)} działających stacji do {OUTPUT_FILE}")
+    print(
+        f"\nZakończono! Zapisano {len(finalne_stacje)} działających stacji do"
+        f" {OUTPUT_FILE}"
+    )
 
 
 if __name__ == "__main__":
