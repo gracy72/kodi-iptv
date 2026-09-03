@@ -2,29 +2,28 @@ name: Automatyczna aktualizacja IPTV
 
 on:
   schedule:
-    - cron: '0 3 * * *'  # Uruchamia się codziennie o godzinie 3:00 rano (czasu UTC)
-  workflow_dispatch:      # Pozwala na ręczne uruchomienie przyciskiem w panelu GitHub
+    - cron: '0 3 * * *'  # Uruchamia się codziennie o 3:00 rano
+  workflow_dispatch:      # Uruchamianie ręczne
 
 jobs:
   auto-update:
     runs-on: ubuntu-latest
 
-    steps:
-      # 1. Pobranie plików z Twojego repozytorium
-      - name: Pobierz kod repozytorium
-        uses: actions/checkout@v4
+    permissions:
+      contents: write
 
-      # 2. Przygotowanie środowiska Python 3.12
+    steps:
+      - name: Pobierz kod repozytorium
+        uses: actions/checkout@v4.2.2
+
       - name: Konfiguracja Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.3.0
         with:
           python-version: '3.12'
 
-      # 3. Uruchomienie skryptu weryfikacyjnego
       - name: Uruchom skrypt process_playlist.py
         run: python process_playlist.py
 
-      # 4. Automatyczny zapis (commit) nowego pliku do repozytorium
       - name: Zapisz zmiany w repozytorium
         run: |
           git config --global user.name 'github-actions[bot]'
