@@ -8,7 +8,6 @@ import xml.etree.ElementTree as ET
 M3U_URLS = [
     "https://iptv-org.github.io/iptv/languages/pol.m3u",  # Język polski
     "https://iptv-org.github.io/iptv/countries/pl.m3u",  # Region: Polska
-    "https://iptv-org.github.io/iptv/categories/news.m3u",  # Kanały informacyjne
 ]
 
 EPG_URL = "https://epg.ovh/pl.xml"
