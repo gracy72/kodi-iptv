@@ -3,7 +3,7 @@ name: Automatyczna aktualizacja IPTV
 on:
   schedule:
     - cron: '0 1 * * *'  # 1:00 UTC = 3:00 rano czasu polskiego (letniego)
-  workflow_dispatch:      # Pozwala na ręczne uruchomienie w dowolnym momencie
+  workflow_dispatch:      # Pozwala na ręczne uruchomienie przyciskiem
 
 jobs:
   auto-update:
@@ -14,10 +14,10 @@ jobs:
 
     steps:
       - name: Pobierz kod repozytorium
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@v4
 
       - name: Konfiguracja Python 3.13
-        uses: actions/setup-python@v5.3.0
+        uses: actions/setup-python@v5
         with:
           python-version: '3.13'
 
