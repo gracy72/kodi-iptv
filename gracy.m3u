@@ -123,8 +123,8 @@ https://live-ch1.trwam.cf.insyscd.net/out/v1/b99041a282774d4a8fe84a54243af5de/tr
 https://stream.tvkstella.pl/stella/stella.m3u8
 #EXTINF:-1 tvg-id="TVP 3 Warszawa" tvg-logo="https://i.imgur.com/AfZOO8U.jpg" group-title="Undefined",TVP 3 Warszawa (1080p) [Not 24/7]
 http://88b9da48.kazmazpaz.ru/iptv/XVU58NBPX2LUMP/7284/index.m3u8
-#EXTINF:-1 tvg-id="ULTRA TV 4K" tvg-logo="https://i.imgur.com/sRtjNdd.png" group-title="Music",Ultra TV 4K (720p)
-http://45.190.28.50/ULTRA/index.m3u8
+#EXTINF:-1 tvg-id="TWOJA TV" tvg-logo="https://i.ibb.co/vxntQD60/twojatv-hd-online.png" group-title="Undefined",Twoja.TV (1080p)
+https://stream.twoja.tv/ttv_hls/live.m3u8
 #EXTINF:-1 tvg-id="Viasat Explore Classic" tvg-logo="https://images-0.rakuten.tv/storage/global-live-channel/translation/artwork/1f51bd5f-5c9a-486d-8720-800de7f73129-width200-quality90.jpeg" group-title="Undefined",Viasat Explore Classic (720p)
 https://da9c49fa.wurl.com/master/f36d25e7e52f1ba8d7e56eb859c636563214f541/UmFrdXRlblRWLXBsX1ZpYXNhdEV4cGxvcmVfSExT/playlist.m3u8
 #EXTINF:-1 tvg-id="wPolsce.pl" tvg-logo="https://i.imgur.com/HQ8UyhL.png" group-title="Undefined",W Polsce PL (720p)
