@@ -18,10 +18,6 @@ INDEKSY_ZRODEL = [
         "https://raw.githubusercontent.com/Romaxa55/world_ip_tv/refs/heads/master/output/pl.m3u",
         True,
     ),
-    # Kategorie tematyczne (wymagają polskiego EPG lub tagu tvg-language/tvg-country)
-    ("https://iptv-org.github.io/iptv/categories/movies.m3u", False),
-    ("https://iptv-org.github.io/iptv/categories/science.m3u", False),
-    ("https://iptv-org.github.io/iptv/categories/news.m3u", False),
 ]
 
 EPG_URL = "https://epg.ovh/pl.xml"
