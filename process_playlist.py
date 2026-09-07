@@ -5,12 +5,14 @@ import time
 import xml.etree.ElementTree as ET
 import aiohttp
 
-# Wskazane źródła M3U/M3U8
+# Publiczne źródła M3U/M3U8 przeszukiwane przez skrypt
 INDEKSY_ZRODEL = [
     "https://iptv-org.github.io/iptv/languages/pol.m3u",
     "https://iptv-org.github.io/iptv/countries/pl.m3u",
     "https://raw.githubusercontent.com/Free-TV/IPTV/refs/heads/master/playlists/playlist_poland.m3u8",
     "https://raw.githubusercontent.com/Romaxa55/world_ip_tv/refs/heads/master/output/pl.m3u",
+    # Nowe dodane źródło z kanałami regionalnymi
+    "https://iptv-org.github.io/iptv/regions/eu.m3u",
 ]
 
 EPG_URL = "https://epg.ovh/pl.xml"
@@ -18,7 +20,7 @@ OUTPUT_FILE = "gracy.m3u"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Kodi/21.0"}
 
-# Kolejność kanałów Naziemnej Telewizji Cyfrowej (MUX 1-8 + MUX L4 Wrocław)
+# Priorytet MUX Naziemnej Telewizji Cyfrowej (Wrocław i MUX L4)
 KOLEJNOSC_MUX_WROCLAW = [
     "tvp1",
     "tvp2",
@@ -62,7 +64,7 @@ KOLEJNOSC_MUX_WROCLAW = [
 
 
 def normalizuj_nazwe(nazwa: str) -> str:
-    """Ujednolica nazwę kanału do porównań, usuwa spacje, znaki specjalne oraz dopiski techniczne."""
+    """Czyszczenie nazwy kanału do porównań i sortowania."""
     if not nazwa:
         return ""
     nazwa = nazwa.lower()
@@ -75,7 +77,6 @@ def normalizuj_nazwe(nazwa: str) -> str:
     return "".join(nazwa.split())
 
 
-# Mapa priorytetów MUX do szybkiego sortowania
 MAPA_MUX = {
     normalizuj_nazwe(nazwa): idx
     for idx, nazwa in enumerate(KOLEJNOSC_MUX_WROCLAW)
@@ -85,7 +86,7 @@ MAPA_MUX = {
 async def pobierz_tekst_async(
     session: aiohttp.ClientSession, url: str, timeout: float = 15.0
 ) -> str:
-    """Asynchronicznie pobiera treść tekstową z adresu URL."""
+    """Asynchroniczne pobieranie zawartości tekstowej z podanego URL."""
     try:
         async with session.get(
             url,
@@ -96,7 +97,7 @@ async def pobierz_tekst_async(
             if response.status == 200:
                 return await response.text(errors="ignore")
     except Exception as e:
-        print(f" Błąd pobierania {url}: {e}")
+        print(f"   Błąd pobierania {url}: {e}")
     return ""
 
 
@@ -106,11 +107,10 @@ async def mierzenie_predkosci_streamu(
     url: str,
     timeout: float = 4.0,
 ) -> tuple[bool, float]:
-    """Testuje połączenie i mierzy rzeczywistą prędkość transferu (KB/s)."""
+    """Testowanie dostępności i pomiar prędkości transferu strumienia (KB/s)."""
     async with semaphore:
         start_time = time.time()
         try:
-            # Żądamy pobrania próbnika 128 KB danych do pomiaru przepustowości
             naglowki = {**HEADERS, "Range": "bytes=0-131072"}
             async with session.get(
                 url,
@@ -131,7 +131,7 @@ async def mierzenie_predkosci_streamu(
 
 
 async def pobierz_baze_epg(session: aiohttp.ClientSession) -> dict[str, str]:
-    """Pobiera i parsuje plik EPG XML."""
+    """Pobieranie przewodnika programowego EPG XML."""
     print("1. Pobieranie bazy EPG z epg.ovh...")
     mapa_epg = {}
     xml_data = await pobierz_tekst_async(session, EPG_URL)
@@ -151,9 +151,9 @@ async def pobierz_baze_epg(session: aiohttp.ClientSession) -> dict[str, str]:
                             channel_id
                         )
 
-            print(f" Załadowano {len(mapa_epg)} reguł z EPG.")
+            print(f"   Załadowano {len(mapa_epg)} reguł z EPG.")
         except Exception as e:
-            print(f" Błąd parsowania XML EPG: {e}")
+            print(f"   Błąd parsowania XML EPG: {e}")
 
     return mapa_epg
 
@@ -161,7 +161,7 @@ async def pobierz_baze_epg(session: aiohttp.ClientSession) -> dict[str, str]:
 def dopasuj_epg_fuzzy(
     nazwa_stacji: str, mapa_epg: dict[str, str], min_podobienstwo: float = 0.60
 ) -> str | None:
-    """Wyszukuje ID w bazie EPG na podstawie podobieństwa nazwy."""
+    """Szukanie pasującego identyfikatora EPG."""
     norm_stacja = normalizuj_nazwe(nazwa_stacji)
     if not norm_stacja:
         return None
@@ -182,7 +182,7 @@ def dopasuj_epg_fuzzy(
 
 
 def pobierz_prio_mux(nazwa_kanalu: str, epg_id: str | None) -> int:
-    """Zwraca pozycję sortowania na podstawie listy MUX Wrocław (0, 1, 2...) lub 9999 dla pozostałych."""
+    """Określanie priorytetu pozycji na liście wg MUX Wrocław."""
     norm_nazwa = normalizuj_nazwe(nazwa_kanalu)
     if norm_nazwa in MAPA_MUX:
         return MAPA_MUX[norm_nazwa]
@@ -196,7 +196,7 @@ def pobierz_prio_mux(nazwa_kanalu: str, epg_id: str | None) -> int:
 
 
 async def przetworz_liste_async():
-    """Główna pętla programu z selekcją najszybszych streamów i sortowaniem MUX."""
+    """Główna logika przetwarzania playlist."""
     async with aiohttp.ClientSession() as session:
         mapa_epg = await pobierz_baze_epg(session)
 
@@ -234,8 +234,6 @@ async def przetworz_liste_async():
 
         wyniki_testow = await asyncio.gather(*zadania_testow)
 
-        # Grupowanie działających strumieni według stacji
-        # Slownik: klucz_stacji -> lista krotek (predkosc_kbps, extinf, stream_url, epg_id)
         grupy_stacji: dict[str, list[tuple[float, str, str, str | None]]] = {}
 
         for (extinf, stream_url), (dziala, predkosc_kbps) in zip(
@@ -262,14 +260,12 @@ async def przetworz_liste_async():
         wybrane_stacje = []
 
         for klucz_stacji, warianty in grupy_stacji.items():
-            # Sortowanie wariantów danego kanału od Najszybszego do Najwolniejszego
             warianty.sort(key=lambda x: x[0], reverse=True)
             najszybszy = warianty[0]
 
             predkosc, extinf, stream_url, epg_id = najszybszy
             nazwa_kanalu = extinf.rsplit(",", 1)[-1].strip()
 
-            # Podmiana/dopisanie tvg-id w nagłówku
             if epg_id:
                 if 'tvg-id="' in extinf:
                     extinf = re.sub(
@@ -285,10 +281,8 @@ async def przetworz_liste_async():
                 (prio_mux, nazwa_kanalu.lower(), extinf, stream_url, predkosc)
             )
 
-        # 5. Sortowanie końcowej listy: najpierw priorytet MUX Wrocław, potem alfabetycznie
         wybrane_stacje.sort(key=lambda x: (x[0], x[1]))
 
-        # Zapis do pliku końcowego
         zapis_linie = ['#EXTM3U url-tvg="https://epg.ovh/pl.xml"']
         for prio, nazwa, extinf, url, predkosc in wybrane_stacje:
             zapis_linie.append(extinf)
@@ -298,7 +292,8 @@ async def przetworz_liste_async():
             f.write("\n".join(zapis_linie))
 
         print(
-            f"\nSukces! Zapisano {len(wybrane_stacje)} stacji uszeregowanych wg MUX Wrocław."
+            f"\nSukces! Zapisano {len(wybrane_stacje)} stacji do pliku"
+            f" {OUTPUT_FILE}."
         )
 
 
