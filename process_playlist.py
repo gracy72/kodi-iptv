@@ -5,14 +5,23 @@ import time
 import xml.etree.ElementTree as ET
 import aiohttp
 
-# Publiczne źródła M3U/M3U8 przeszukiwane przez skrypt
+# Źródła M3U/M3U8 podzielone na polskie (przepuszczane) oraz międzynarodowe (filtrowane)
 INDEKSY_ZRODEL = [
-    "https://iptv-org.github.io/iptv/languages/pol.m3u",
-    "https://iptv-org.github.io/iptv/countries/pl.m3u",
-    "https://raw.githubusercontent.com/Free-TV/IPTV/refs/heads/master/playlists/playlist_poland.m3u8",
-    "https://raw.githubusercontent.com/Romaxa55/world_ip_tv/refs/heads/master/output/pl.m3u",
-    # Nowe dodane źródło z kanałami regionalnymi
-    "https://iptv-org.github.io/iptv/regions/eu.m3u",
+    # (Adres URL, czy_zrodlo_jest_domyslnie_polskie)
+    ("https://iptv-org.github.io/iptv/languages/pol.m3u", True),
+    ("https://iptv-org.github.io/iptv/countries/pl.m3u", True),
+    (
+        "https://raw.githubusercontent.com/Free-TV/IPTV/refs/heads/master/playlists/playlist_poland.m3u8",
+        True,
+    ),
+    (
+        "https://raw.githubusercontent.com/Romaxa55/world_ip_tv/refs/heads/master/output/pl.m3u",
+        True,
+    ),
+    # Kategorie tematyczne (wymagają polskiego EPG lub tagu tvg-language/tvg-country)
+    ("https://iptv-org.github.io/iptv/categories/movies.m3u", False),
+    ("https://iptv-org.github.io/iptv/categories/science.m3u", False),
+    ("https://iptv-org.github.io/iptv/categories/news.m3u", False),
 ]
 
 EPG_URL = "https://epg.ovh/pl.xml"
@@ -131,7 +140,7 @@ async def mierzenie_predkosci_streamu(
 
 
 async def pobierz_baze_epg(session: aiohttp.ClientSession) -> dict[str, str]:
-    """Pobieranie przewodnika programowego EPG XML."""
+    """Pobieranie przewodnika programowego EPG XML z epg.ovh."""
     print("1. Pobieranie bazy EPG z epg.ovh...")
     mapa_epg = {}
     xml_data = await pobierz_tekst_async(session, EPG_URL)
@@ -181,6 +190,30 @@ def dopasuj_epg_fuzzy(
     return najlepszy_id
 
 
+def czy_kanal_jest_polski(
+    extinf: str, epg_id: str | None, jest_pl_source: bool
+) -> bool:
+    """Weryfikuje, czy dany kanał kwalifikuje się jako polskojęzyczny."""
+    # 1. Przepuszczamy kanały pochodzące ze stricte polskich playlist
+    if jest_pl_source:
+        return True
+
+    extinf_lower = extinf.lower()
+
+    # 2. Sprawdzamy obecność tagów językowych/krajowych w nagłówku M3U
+    if (
+        'tvg-language="pol"' in extinf_lower
+        or 'tvg-country="pl"' in extinf_lower
+    ):
+        return True
+
+    # 3. Przepuszczamy kanał z kategorii ogólnej TYLKO WTEDY, gdy pasuje do polskiego EPG z epg.ovh
+    if epg_id is not None:
+        return True
+
+    return False
+
+
 def pobierz_prio_mux(nazwa_kanalu: str, epg_id: str | None) -> int:
     """Określanie priorytetu pozycji na liście wg MUX Wrocław."""
     norm_nazwa = normalizuj_nazwe(nazwa_kanalu)
@@ -204,7 +237,7 @@ async def przetworz_liste_async():
         surowe_kanaly = []
         unikalne_urle = set()
 
-        for zrodlo_url in INDEKSY_ZRODEL:
+        for zrodlo_url, jest_pl_source in INDEKSY_ZRODEL:
             m3u_text = await pobierz_tekst_async(session, zrodlo_url)
             if not m3u_text:
                 continue
@@ -218,7 +251,9 @@ async def przetworz_liste_async():
                         stream_url = linie[i + 1].strip()
                         if stream_url not in unikalne_urle:
                             unikalne_urle.add(stream_url)
-                            surowe_kanaly.append((linia, stream_url))
+                            surowe_kanaly.append(
+                                (linia, stream_url, jest_pl_source)
+                            )
                         i += 1
                 i += 1
 
@@ -229,14 +264,14 @@ async def przetworz_liste_async():
         semaphore = asyncio.Semaphore(35)
         zadania_testow = [
             mierzenie_predkosci_streamu(session, semaphore, url)
-            for _, url in surowe_kanaly
+            for _, url, _ in surowe_kanaly
         ]
 
         wyniki_testow = await asyncio.gather(*zadania_testow)
 
         grupy_stacji: dict[str, list[tuple[float, str, str, str | None]]] = {}
 
-        for (extinf, stream_url), (dziala, predkosc_kbps) in zip(
+        for (extinf, stream_url, jest_pl_source), (dziala, predkosc_kbps) in zip(
             surowe_kanaly, wyniki_testow
         ):
             if dziala:
@@ -244,6 +279,10 @@ async def przetworz_liste_async():
                 epg_id = dopasuj_epg_fuzzy(
                     nazwa_kanalu, mapa_epg, min_podobienstwo=0.60
                 )
+
+                # KLUCZOWY FILTR JĘZYKOWY
+                if not czy_kanal_jest_polski(extinf, epg_id, jest_pl_source):
+                    continue
 
                 klucz_stacji = (
                     epg_id if epg_id else normalizuj_nazwe(nazwa_kanalu)
@@ -292,7 +331,7 @@ async def przetworz_liste_async():
             f.write("\n".join(zapis_linie))
 
         print(
-            f"\nSukces! Zapisano {len(wybrane_stacje)} stacji do pliku"
+            f"\nSukces! Zapisano {len(wybrane_stacje)} czystych polskich stacji do"
             f" {OUTPUT_FILE}."
         )
 
