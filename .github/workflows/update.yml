@@ -2,8 +2,12 @@ name: Automatyczna aktualizacja IPTV
 
 on:
   schedule:
-    - cron: '0 1 * * *'  # 1:00 UTC = 3:00 rano czasu polskiego (letniego)
-  workflow_dispatch:      # Pozwala na ręczne uruchomienie przyciskiem
+    # 2:00 UTC = 4:00 czasu polskiego letniego (CEST), 3:00 czasu zimowego (CET)
+    - cron: '0 2 * * *'
+  workflow_dispatch:      # Pozwala na reczne uruchomienie przyciskiem
+  push:
+    paths:
+      - 'process_playlist.py'   # przebuduj liste, gdy zmieni sie skrypt
 
 jobs:
   auto-update:
