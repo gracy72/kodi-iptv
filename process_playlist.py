@@ -12,13 +12,15 @@ Względem wersji pierwotnej poprawiono m.in.:
   * normalizację nazw - uwzględnia znaki diakrytyczne (ł, ó, ę, ą, ż, ź, ć, ń),
     dzięki czemu "TVP3 Wrocław" trafia w priorytet MUX,
   * parser M3U - nie gubi kanałów, po których #EXTINF stoi #EXTVLCOPT/#KODIPROP,
+    a nazwę kanału bierze po pierwszym przecinku POZA cudzysłowami (wcześniej
+    przecinek z atrybutu http-user-agent ucinał nazwę i psuł EPG oraz kolejność),
   * EPG (~70 MB) - strumieniowe parsowanie (iterparse + clear), limit rozmiaru,
     dłuższy timeout, walidacja; skrypt nie zapisuje pustej listy,
   * dopasowanie EPG - najpierw tvg-id ze źródła, potem dopasowanie dokładne,
     na końcu fuzzy z wysokim progiem i ochroną przed niejednoznacznością
     (koniec sklejania np. "BabyFirst" z "BBC First"),
   * realny test strumienia - pobierany jest segment HLS (nie sama playlista!),
-    mierzona jest przepustowość, odrzucane są odpowiedzi HTML i HTTP błędy,
+    mierzona jest przepustowość, nieudane próby są powtarzane,
   * limit połączeń globalnie i per-host, TLS weryfikowany,
   * zapis atomowy, sortowanie deterministyczne, nagłówek url-tvg + x-tvg-url.
 
@@ -76,9 +78,11 @@ EPG_TIMEOUT = 300.0          # pobieranie EPG (~70 MB)
 EPG_SOCK_READ = 120.0
 EPG_MAX_BYTES = 300 * 1024 * 1024
 STREAM_TIMEOUT = 8.0         # pojedynczy test strumienia
+PROBY_STRUMIENIA = 3         # ile razy próbować, gdy strumień nie odpowiedział
 
 MAX_ROWNOLOGE = 40           # ile strumieni testować równolegle
-MAX_NA_HOST = 6              # ile równolegle do jednego serwera
+MAX_NA_HOST = 4              # ile równolegle do jednego serwera (serwery IPTV
+                             #   odrzucają część żądań przy większym tłoku)
 
 MAX_SEGMENT_BYTES = 512 * 1024   # ile bajtów strumienia pobrać do pomiaru
 MIN_SEGMENT_BYTES = 16 * 1024    # poniżej tego uznajemy, że nic nie działa
@@ -150,8 +154,10 @@ ALIASY_MUX = {
 # Normalizacja nazw
 # ---------------------------------------------------------------------------
 
+# Uwaga: "polska"/"polski"/"polskie" NIE są usuwane - występują w nazwach
+# kanałów (np. "Kino Polska"), a nie tylko jako znacznik kraju.
 _USUN_TOKENY = re.compile(
-    r"\b(hd|fhd|uhd|4k|8k|sd|pl|pol|poland|polska|polski|polskie|"
+    r"\b(hd|fhd|uhd|4k|8k|sd|pl|poland|"
     r"1080p|1080i|720p|576p|576i|480p|360p|stream|live|backup|"
     r"hevc|h265|h264|hls|dash|m3u8)\b"
 )
@@ -221,13 +227,23 @@ class WybranyKanal:
 # Parsowanie playlist M3U
 # ---------------------------------------------------------------------------
 
-_RE_NAZWA = re.compile(r",\s*(.*)$")
 _RE_TVG_ID = re.compile(r'tvg-id="([^"]*)"', re.IGNORECASE)
 
 
 def _nazwa_z_extinf(extinf: str) -> str:
-    dopasowanie = _RE_NAZWA.search(extinf)
-    return dopasowanie.group(1).strip() if dopasowanie else ""
+    """Zwraca nazwę kanału, czyli tekst po PIERWSZYM przecinku POZA cudzysłowami.
+
+    Przecinki w wartościach atrybutów (np. http-user-agent="... KHTML, like
+    Gecko) ...") są w cudzysłowach, więc ich nie bierzemy; przecinki w samej
+    nazwie kanału zostają.
+    """
+    w_cudzyslowie = False
+    for indeks, znak in enumerate(extinf):
+        if znak == '"':
+            w_cudzyslowie = not w_cudzyslowie
+        elif znak == "," and not w_cudzyslowie:
+            return extinf[indeks + 1:].strip()
+    return ""
 
 
 def _tvg_id_z_extinf(extinf: str) -> str | None:
@@ -669,13 +685,21 @@ async def sprawdz_strumien(
     semafory_hostow: dict[str, asyncio.Semaphore],
     timeout: float = STREAM_TIMEOUT,
 ) -> tuple[bool, float]:
+    """Testuje strumień. Serwery IPTV często odrzucają część żądań, dlatego
+    nieudany test powtarzamy (z krótką przerwą), zanim uznamy kanał za martwy."""
     async with sem_globalny:
         async with _sem_dla_hosta(_host(kanal.url), semafory_hostow):
-            try:
-                return await _sprawdz(session, kanal.url, timeout)
-            except Exception as blad:  # noqa: BLE001
-                log.debug("Test %s zakończony błędem: %s", kanal.url, blad)
-                return False, 0.0
+            for proba in range(max(1, PROBY_STRUMIENIA)):
+                try:
+                    wynik = await _sprawdz(session, kanal.url, timeout)
+                except Exception as blad:  # noqa: BLE001
+                    log.debug("Test %s zakończony błędem: %s", kanal.url, blad)
+                    wynik = (False, 0.0)
+                if wynik[0]:
+                    return wynik
+                if proba + 1 < PROBY_STRUMIENIA:
+                    await asyncio.sleep(0.4 * (proba + 1))
+            return False, 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -787,10 +811,17 @@ async def przetworz_liste_async() -> int:
             if epg_id:
                 extinf = _wstaw_tvg_id(extinf, epg_id)
 
+            prio = pobierz_prio_mux(kanal.nazwa, epg_id)
+            klucz_nazwy = normalizuj_nazwe(kanal.nazwa)
+            log.debug(
+                "wybrano: prio=%d klucz=%r nazwa=%r epg=%r kbps=%.0f",
+                prio, klucz_nazwy, kanal.nazwa, epg_id, kbps,
+            )
+
             wybrane.append(
                 WybranyKanal(
-                    prio=pobierz_prio_mux(kanal.nazwa, epg_id),
-                    klucz_nazwy=normalizuj_nazwe(kanal.nazwa),
+                    prio=prio,
+                    klucz_nazwy=klucz_nazwy,
                     extinf=extinf,
                     url=kanal.url,
                     kbps=kbps,
