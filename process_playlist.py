@@ -26,6 +26,9 @@ Względem wersji pierwotnej poprawiono m.in.:
     i krótkotrwałe, więc manifest pobierany jest na świeżo przy każdym
     uruchomieniu (identyfikatory kanałów są w konfiguracji niżej),
   * limit połączeń globalnie i per-host, TLS weryfikowany,
+  * tryb lokalny: uruchomienie z GRACY_PUSH=1 wgrywa gotową listę na GitHub przez
+    API (token w GITHUB_TOKEN albo w pliku github_token.txt) - to pozwala tworzyć
+    listę z polskiego adresu IP, bo TVP wydaje adresy strumieni tylko dla Polski,
   * zapis atomowy, sortowanie deterministyczne, nagłówek url-tvg + x-tvg-url.
 
 Wymaga: Python 3.9+ oraz aiohttp.
@@ -34,6 +37,9 @@ Wymaga: Python 3.9+ oraz aiohttp.
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import json
 import logging
 import os
 import re
@@ -42,6 +48,8 @@ import sys
 import tempfile
 import time
 import unicodedata
+import urllib.error
+import urllib.request
 import xml.etree.ElementTree as ET
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -79,7 +87,8 @@ OUTPUT_FILE = os.environ.get("GRACY_OUTPUT", "gracy.m3u")
 # Każdy kanał ma w serwisie TVP identyfikator "video_id". Adres manifestu jest
 # tokenowy i krótkotrwały (token zawiera datę), więc pobieramy go na świeżo przy
 # każdym uruchomieniu: video_id -> TVPlayer2 API -> adres master.m3u8.
-# Sprawdzone: strumienie są bez DRM i bez geoblokady (isGeoBlocked: false).
+# Sprawdzone: strumienie są bez DRM, ale TVP wydaje adresy tylko dla polskich
+# adresów IP - z zagranicy odpowiedź API nie zawiera adresu manifestu.
 KANALY_TVP: list[tuple[str, str]] = [
     # kanały, których nie ma w innych źródłach
     ("TVP Dokument", "53795159"),
@@ -102,6 +111,20 @@ TVP_CONFIG_URL = (
     "id={video_id}&@method=getTvpConfig&@callback=cb"
 )
 TVP_TIMEOUT = 15.0
+TVP_PROBY = 3                # API TVP czasem odpowiada bez adresu - ponawiamy
+
+# --- Wgrywanie wyniku na GitHub (tryb lokalny) -----------------------------
+# Uruchomienie z GRACY_PUSH=1 powoduje, że po zapisaniu gracy.m3u skrypt wgrywa
+# go na GitHub przez API. Token bierzemy ze zmiennej GITHUB_TOKEN albo z pliku
+# github_token.txt obok skryptu. Dzięki temu lista może być generowana z polskiego
+# IP (TVP wydaje adresy strumieni tylko dla adresów z Polski), a runner GitHuba
+# działa jako zapas.
+GITHUB_REPO = os.environ.get("GRACY_GITHUB_REPO", "gracy72/kodi-iptv")
+GITHUB_PATH = os.environ.get("GRACY_GITHUB_PATH", "gracy.m3u")
+GITHUB_BRANCH = os.environ.get("GRACY_GITHUB_BRANCH", "main")
+PLIK_TOKENU = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "github_token.txt"
+)
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Kodi/21.0"}
 
@@ -560,7 +583,15 @@ async def pobierz_kanaly_tvp(session: aiohttp.ClientSession) -> list[KanalZrodlo
     kanaly: list[KanalZrodlowy] = []
     for nazwa, video_id in KANALY_TVP:
         adres_api = TVP_CONFIG_URL.format(video_id=video_id)
-        tekst = await pobierz_tekst(session, adres_api, TVP_TIMEOUT)
+        tekst = ""
+        for proba in range(TVP_PROBY):
+            tekst = await pobierz_tekst(session, adres_api, TVP_TIMEOUT)
+            if tekst and _RE_TVP_M3U8.search(tekst.replace(r"\/", "/")):
+                break
+            if proba + 1 < TVP_PROBY:
+                log.debug("   TVP %s: brak manifestu (próba %d) - ponawiam",
+                          nazwa, proba + 1)
+                await asyncio.sleep(1.5 * (proba + 1))
         if not tekst:
             log.warning("   TVP %s: brak odpowiedzi API", nazwa)
             continue
@@ -809,6 +840,111 @@ def zapisz_atomowo(sciezka: str, tresc: str) -> None:
         raise
 
 
+def _token_github() -> str | None:
+    """Token z GITHUB_TOKEN / GRACY_TOKEN albo z pliku github_token.txt."""
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GRACY_TOKEN")
+    if token and token.strip():
+        return token.strip()
+    try:
+        with open(PLIK_TOKENU, encoding="utf-8") as plik:
+            zawartosc = plik.read().strip()
+        return zawartosc or None
+    except OSError:
+        return None
+
+
+def _git_blob_sha(dane: bytes) -> str:
+    """SHA-1 obiektu blob w Git (tak samo liczy go GitHub)."""
+    naglowek = b"blob " + str(len(dane)).encode("ascii") + b"\0"
+    return hashlib.sha1(naglowek + dane).hexdigest()
+
+
+def _zapytanie_github(
+    adres: str, token: str, dane: bytes | None, metoda: str
+) -> dict:
+    naglowki = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "gracy-iptv",
+        "Content-Type": "application/json",
+    }
+    zadanie = urllib.request.Request(adres, data=dane, headers=naglowki, method=metoda)
+    with urllib.request.urlopen(zadanie, timeout=60) as odpowiedz:
+        return json.loads(odpowiedz.read().decode("utf-8"))
+
+
+def wgraj_na_github(sciezka: str) -> None:
+    """Wgrywa wynik na GitHub przez API (tryb lokalny, GRACY_PUSH=1).
+
+    Dzięki temu lista może powstawać z polskiego adresu IP - TVP wydaje adresy
+    strumieni tylko dla adresów z Polski, więc runner GitHuba ich nie dostanie.
+    """
+    token = _token_github()
+    if not token:
+        log.warning(
+            "GitHub: brak tokenu (GITHUB_TOKEN albo %s) - pomijam wgrywanie",
+            os.path.basename(PLIK_TOKENU),
+        )
+        return
+
+    with open(sciezka, "rb") as plik:
+        zawartosc = plik.read()
+
+    adres = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_PATH}"
+
+    for proba in range(1, 3):
+        # 1. odczyt zdalnego blob sha (i porównanie treści - bez zmian nic nie wgrywamy)
+        try:
+            zdalny = _zapytanie_github(
+                f"{adres}?ref={GITHUB_BRANCH}", token, None, "GET"
+            )
+        except urllib.error.HTTPError as blad:
+            if blad.code == 404:  # pliku jeszcze nie ma
+                zdalny = {}
+            else:
+                log.warning("GitHub: nie mogę odczytać pliku (%s)", blad.code)
+                return
+        except Exception as blad:  # noqa: BLE001
+            log.warning("GitHub: błąd sieci przy odczycie (%s)", blad)
+            return
+
+        if zdalny.get("sha") == _git_blob_sha(zawartosc):
+            log.info("GitHub: plik bez zmian - nic nie wgrywam")
+            return
+
+        tresc_zadania = {
+            "message": "Aktualizacja gracy.m3u (lokalnie, z polskiego IP)",
+            "content": base64.b64encode(zawartosc).decode("ascii"),
+            "branch": GITHUB_BRANCH,
+        }
+        if zdalny.get("sha"):
+            tresc_zadania["sha"] = zdalny["sha"]
+
+        # 2. wgranie pliku
+        try:
+            wynik = _zapytanie_github(
+                adres, token, json.dumps(tresc_zadania).encode("utf-8"), "PUT"
+            )
+            log.info(
+                "GitHub: wgrano %s (commit %s)",
+                GITHUB_PATH,
+                str(wynik.get("commit", {}).get("sha", "?"))[:8],
+            )
+            return
+        except urllib.error.HTTPError as blad:
+            tresc_bledu = blad.read()[:200]
+            if blad.code in (409, 422) and proba < 2:
+                log.warning("GitHub: konflikt (%s) - próbuję jeszcze raz", blad.code)
+                time.sleep(2)
+                continue
+            log.warning("GitHub: nie udało się wgrać (%s): %s", blad.code, tresc_bledu)
+            return
+        except Exception as blad:  # noqa: BLE001
+            log.warning("GitHub: błąd sieci przy wgrywaniu (%s)", blad)
+            return
+
+
 # ---------------------------------------------------------------------------
 # Główna logika
 # ---------------------------------------------------------------------------
@@ -916,6 +1052,9 @@ async def przetworz_liste_async() -> int:
             linie.append(kanal.url)
 
         zapisz_atomowo(OUTPUT_FILE, "\n".join(linie) + "\n")
+
+        if os.environ.get("GRACY_PUSH", "").strip().lower() in ("1", "true", "tak", "yes"):
+            wgraj_na_github(OUTPUT_FILE)
 
         log.info(
             "Sukces: zapisano %d kanałów do %s (MUX Wrocław: %d).",
