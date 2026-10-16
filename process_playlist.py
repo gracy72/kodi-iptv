@@ -3,10 +3,10 @@
 """
 process_playlist.py
 
-Zbiera polskojęzyczne kanały z kilku publicznych playlist M3U/M3U8, dopasowuje
-do nich EPG z epg.ovh, sprawdza czy strumienie faktycznie działają (i z jaką
-przepustowością) oraz zapisuje wynik do gracy.m3u w kolejności odpowiadającej
-MUX-om naziemnym odbieranym we Wrocławiu.
+Zbiera polskojęzyczne kanały z kilku publicznych playlist M3U/M3U8 oraz z
+oficjalnego serwisu TVP, dopasowuje do nich EPG z epg.ovh, sprawdza czy
+strumienie faktycznie działają (i z jaką przepustowością) oraz zapisuje wynik
+do gracy.m3u w kolejności odpowiadającej MUX-om naziemnym we Wrocławiu.
 
 Względem wersji pierwotnej poprawiono m.in.:
   * normalizację nazw - uwzględnia znaki diakrytyczne (ł, ó, ę, ą, ż, ź, ć, ń),
@@ -21,6 +21,10 @@ Względem wersji pierwotnej poprawiono m.in.:
     (koniec sklejania np. "BabyFirst" z "BBC First"),
   * realny test strumienia - pobierany jest segment HLS (nie sama playlista!),
     mierzona jest przepustowość, nieudane próby są powtarzane,
+  * oficjalne źródło TVP (serwis TVP Stream / TVP VOD) - kanały TVP Dokument
+    i TVP Nauka, których nie ma w innych playlistach; adresy TVP są tokenowe
+    i krótkotrwałe, więc manifest pobierany jest na świeżo przy każdym
+    uruchomieniu (identyfikatory kanałów są w konfiguracji niżej),
   * limit połączeń globalnie i per-host, TLS weryfikowany,
   * zapis atomowy, sortowanie deterministyczne, nagłówek url-tvg + x-tvg-url.
 
@@ -70,6 +74,34 @@ INDEKSY_ZRODEL: list[tuple[str, bool]] = [
 
 EPG_URL = "https://epg.ovh/pl.xml"
 OUTPUT_FILE = os.environ.get("GRACY_OUTPUT", "gracy.m3u")
+
+# --- Oficjalne źródło TVP (serwis TVP Stream / TVP VOD) --------------------
+# Każdy kanał ma w serwisie TVP identyfikator "video_id". Adres manifestu jest
+# tokenowy i krótkotrwały (token zawiera datę), więc pobieramy go na świeżo przy
+# każdym uruchomieniu: video_id -> TVPlayer2 API -> adres master.m3u8.
+# Sprawdzone: strumienie są bez DRM i bez geoblokady (isGeoBlocked: false).
+KANALY_TVP: list[tuple[str, str]] = [
+    # kanały, których nie ma w innych źródłach
+    ("TVP Dokument", "53795159"),
+    ("TVP Nauka", "71345993"),
+]
+
+# Pozostałe oficjalne kanały TVP - świadomie nieużywane, bo są już w innych
+# źródłach, a ich tokeny wygasają (mogłyby wypaść między uruchomieniami):
+KANALY_TVP_ZAPASOWE: list[tuple[str, str]] = [
+    ("TVP 1", "51689486"),
+    ("TVP 2", "51696811"),
+    ("TVP Info", "51696820"),
+    ("TVP Sport", "51696827"),
+    ("TVP Rozrywka", "51696825"),
+    ("TVP Historia", "51696819"),
+]
+
+TVP_CONFIG_URL = (
+    "https://www.tvp.pl/sess/TVPlayer2/api.php?"
+    "id={video_id}&@method=getTvpConfig&@callback=cb"
+)
+TVP_TIMEOUT = 15.0
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Kodi/21.0"}
 
@@ -228,6 +260,7 @@ class WybranyKanal:
 # ---------------------------------------------------------------------------
 
 _RE_TVG_ID = re.compile(r'tvg-id="([^"]*)"', re.IGNORECASE)
+_RE_TVP_M3U8 = re.compile(r'https?://\S+master\.m3u8')
 
 
 def _nazwa_z_extinf(extinf: str) -> str:
@@ -515,6 +548,43 @@ async def pobierz_tekst(
         return ""
 
 
+async def pobierz_kanaly_tvp(session: aiohttp.ClientSession) -> list[KanalZrodlowy]:
+    """Zamienia identyfikatory TVP na świeże adresy oficjalnych manifestów HLS.
+
+    TVP wydaje tokenowe adresy (token zawiera datę), więc nie da się ich
+    wpisać na stałe do playlisty - trzeba je pobrać przy każdym uruchomieniu.
+    """
+    if not KANALY_TVP:
+        return []
+    log.info("   TVP: pobieranie oficjalnych adresów (%d kanałów)...", len(KANALY_TVP))
+    kanaly: list[KanalZrodlowy] = []
+    for nazwa, video_id in KANALY_TVP:
+        adres_api = TVP_CONFIG_URL.format(video_id=video_id)
+        tekst = await pobierz_tekst(session, adres_api, TVP_TIMEOUT)
+        if not tekst:
+            log.warning("   TVP %s: brak odpowiedzi API", nazwa)
+            continue
+        adresy = sorted(set(_RE_TVP_M3U8.findall(tekst.replace(r"\/", "/"))))
+        if not adresy:
+            log.warning("   TVP %s: brak adresu manifestu w odpowiedzi API", nazwa)
+            continue
+        kanaly.append(
+            KanalZrodlowy(
+                extinf=(
+                    f'#EXTINF:-1 tvg-id="{nazwa}" '
+                    f'group-title="TVP (oficjalny)",{nazwa}'
+                ),
+                url=adresy[0],
+                nazwa=nazwa,
+                tvg_id=nazwa,
+                zrodlo_pl=True,
+            )
+        )
+        log.debug("   TVP %s -> %s", nazwa, adresy[0])
+    log.info("   TVP: gotowych adresów: %d/%d", len(kanaly), len(KANALY_TVP))
+    return kanaly
+
+
 # ---------------------------------------------------------------------------
 # Test strumienia
 # ---------------------------------------------------------------------------
@@ -762,6 +832,8 @@ async def przetworz_liste_async() -> int:
             nowe = parsuj_playliste(tekst, czy_pl, widziane_url)
             log.info("   %s -> %d kanałów", adres.rsplit("/", 1)[-1], len(nowe))
             kanaly.extend(nowe)
+
+        kanaly.extend(await pobierz_kanaly_tvp(session))
 
         if not kanaly:
             log.error("Nie pobrano żadnych kanałów - przerywam bez zapisu.")
