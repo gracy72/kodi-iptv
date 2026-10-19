@@ -7,7 +7,8 @@ on:
   workflow_dispatch:      # Pozwala na reczne uruchomienie przyciskiem
   push:
     paths:
-      - 'process_playlist.py'   # przebuduj liste, gdy zmieni sie skrypt
+      - 'process_playlist.py'          # przebuduj liste, gdy zmieni sie skrypt
+      - '.github/workflows/update.yml' # ...albo sam workflow (reczne wznowienie)
 
 jobs:
   auto-update:
