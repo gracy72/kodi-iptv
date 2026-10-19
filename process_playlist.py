@@ -26,9 +26,9 @@ Względem wersji pierwotnej poprawiono m.in.:
     i krótkotrwałe, więc manifest pobierany jest na świeżo przy każdym
     uruchomieniu (identyfikatory kanałów są w konfiguracji niżej),
   * limit połączeń globalnie i per-host, TLS weryfikowany,
-  * lista jest kumulatywna - kanały z poprzedniego gracy.m3u zostają (o ile
-    działają), a źródła online tylko dodają nowe; adres z poprzedniej listy ma
-    pierwszeństwo, więc nie ma zbędnej rotacji serwerów,
+  * lista jest kumulatywna - kanały z poprzedniego gracy.m3u oraz z pliku
+    gracy_dodatkowe.m3u zostają (o ile działają), a źródła online tylko dodają
+    nowe; adres z poprzedniej listy ma pierwszeństwo (mniejsza rotacja serwerów),
   * kanały, które przestały działać, trafiają do gracy_archiwum.m3u z datą
     awarii; archiwum jest sprawdzane przy każdym uruchomieniu (działające wracają
     do listy), a po DNI_W_ARCHIWUM dniach martwy wpis jest usuwany na stałe,
@@ -95,6 +95,10 @@ OUTPUT_FILE = os.environ.get("GRACY_OUTPUT", "gracy.m3u")
 # jeśli znów zadziała. Po DNI_W_ARCHIWUM dniach martwy wpis jest usuwany na stałe.
 PLIK_ARCHIWUM = os.environ.get("GRACY_ARCHIWUM", "gracy_archiwum.m3u")
 DNI_W_ARCHIWUM = 7
+
+# Własne kanały, których nie ma (chwilowo) w źródłach - próbowane przy każdym
+# uruchomieniu, tak samo jak kanały z poprzedniej listy.
+PLIK_DODATKOWE = os.environ.get("GRACY_DODATKOWE", "gracy_dodatkowe.m3u")
 
 # --- Oficjalne źródło TVP (serwis TVP Stream / TVP VOD) --------------------
 # Każdy kanał ma w serwisie TVP identyfikator "video_id". Adres manifestu jest
@@ -371,7 +375,7 @@ def _martwy_od_z_extinf(extinf: str) -> str | None:
 
 
 def wczytaj_liste(sciezka: str) -> list[KanalZrodlowy]:
-    """Czyta istniejącą playlistę (poprzedni wynik albo archiwum).
+    """Czyta istniejącą playlistę (poprzedni wynik, archiwum, plik dodatkowy).
 
     Brak pliku to nie błąd - pierwszy przebieg po prostu nie ma bazy.
     """
@@ -1058,7 +1062,9 @@ async def przetworz_liste_async() -> int:
         mapa_epg = await pobierz_baze_epg(session)
 
         poprzednie = wczytaj_liste(OUTPUT_FILE)
+        dodatkowe = wczytaj_liste(PLIK_DODATKOWE)
         archiwum = wczytaj_liste(PLIK_ARCHIWUM)
+        baza = poprzednie + dodatkowe
 
         log.info("2. Pobieranie list M3U/M3U8 (%d źródeł)...", len(INDEKSY_ZRODEL))
         ze_zrodel: list[KanalZrodlowy] = []
@@ -1076,14 +1082,15 @@ async def przetworz_liste_async() -> int:
         ze_zrodel.extend(await pobierz_kanaly_tvp(session))
 
         log.info(
-            "   Baza: %d kanałów z poprzedniej listy, %d w archiwum, %d ze źródeł",
-            len(poprzednie), len(archiwum), len(ze_zrodel),
+            "   Baza: %d kanałów z poprzedniej listy, %d dodatkowych, %d w archiwum,"
+            " %d ze źródeł",
+            len(poprzednie), len(dodatkowe), len(archiwum), len(ze_zrodel),
         )
 
-        # testujemy wszystko: poprzednia lista + archiwum + źródła (adres tylko raz)
+        # testujemy wszystko: poprzednia lista + dodatkowe + archiwum + źródła
         do_testu: list[KanalZrodlowy] = []
         widziane: set[str] = set()
-        for wpis in poprzednie + archiwum + ze_zrodel:
+        for wpis in baza + archiwum + ze_zrodel:
             if not wpis.url or wpis.url in widziane:
                 continue
             widziane.add(wpis.url)
@@ -1104,8 +1111,8 @@ async def przetworz_liste_async() -> int:
         ]
         wyniki = await asyncio.gather(*zadania)
 
-        # adresy z poprzedniej listy mają pierwszeństwo (mniejsza rotacja źródeł)
-        preferowane = {wpis.url for wpis in poprzednie}
+        # adresy z poprzedniej listy (i z pliku dodatkowego) mają pierwszeństwo
+        preferowane = {wpis.url for wpis in baza}
         dzialajace_url = {
             wpis.url for wpis, (ok, _) in zip(do_testu, wyniki) if ok
         }
@@ -1166,8 +1173,8 @@ async def przetworz_liste_async() -> int:
         nowe_martwe = 0
         usuniete = 0
 
-        # 1) kanały z poprzedniej listy, których nie udało się uratować
-        for wpis in poprzednie:
+        # 1) kanały z poprzedniej listy i z pliku dodatkowego, których nie uratowano
+        for wpis in baza:
             klucz = klucz_stacji(wpis.nazwa, wpis.tvg_id, mapa_epg)
             if klucz and klucz in grupy:
                 continue  # stacja jest w wyniku (być może z innym adresem)
