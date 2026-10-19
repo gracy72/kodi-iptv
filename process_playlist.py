@@ -32,6 +32,10 @@ Względem wersji pierwotnej poprawiono m.in.:
   * kanały, które przestały działać, trafiają do gracy_archiwum.m3u z datą
     awarii; archiwum jest sprawdzane przy każdym uruchomieniu (działające wracają
     do listy), a po DNI_W_ARCHIWUM dniach martwy wpis jest usuwany na stałe,
+  * kanały z serwera, z którego w danym przebiegu nie zadziałało ANI JEDNO łącze
+    (blokada geograficzna / awaria hosta), są utrzymywane w liście bez zmian,
+  * zabezpieczenie: gdy w jednym przebiegu wypadnie naraz dużo kanałów, skrypt
+    uznaje to za awarię sieci i nie zmienia ani listy, ani archiwum,
   * tryb lokalny: uruchomienie z GRACY_PUSH=1 wgrywa gotową listę na GitHub przez
     API (token w GITHUB_TOKEN albo w pliku github_token.txt) - to pozwala tworzyć
     listę z polskiego adresu IP, bo TVP wydaje adresy strumieni tylko dla Polski,
@@ -1167,17 +1171,65 @@ async def przetworz_liste_async() -> int:
 
         wybrane.sort(key=lambda k: (k.prio, k.klucz_nazwy, k.url))
 
+        # --- hosty nieosiągalne z tej sieci ---------------------------------
+        # Jeśli z danego serwera nie zadziałało ANI JEDNO łącze (przy co najmniej
+        # 3 adresach), to prawie na pewno blokada geograficzna albo awaria hosta,
+        # a nie śmierć kanałów. Takich kanałów nie wyrzucamy i nie archiwizujemy.
+        statystyki_hostow: dict[str, list[int]] = {}
+        for wpis, (ok, _) in zip(do_testu, wyniki):
+            licznik = statystyki_hostow.setdefault(_host(wpis.url), [0, 0])
+            licznik[0] += 1
+            if ok:
+                licznik[1] += 1
+
+        hosty_niedostepne = {
+            host for host, (razem, dziala) in statystyki_hostow.items()
+            if razem >= 3 and dziala == 0
+        }
+        if hosty_niedostepne:
+            log.warning(
+                "   Niedostępne z tej sieci (%d): %s",
+                len(hosty_niedostepne), ", ".join(sorted(hosty_niedostepne)[:6]),
+            )
+
+        zachowane: set[str] = set()
+        for wpis in baza:
+            klucz = klucz_stacji(wpis.nazwa, wpis.tvg_id, mapa_epg)
+            if not klucz or klucz in grupy or klucz in zachowane:
+                continue
+            if _host(wpis.url) not in hosty_niedostepne:
+                continue
+            epg_id = dopasuj_epg(wpis, mapa_epg)
+            extinf = _wstaw_tvg_id(wpis.extinf, epg_id) if epg_id else wpis.extinf
+            wybrane.append(
+                WybranyKanal(
+                    prio=pobierz_prio_mux(wpis.nazwa, epg_id),
+                    klucz_nazwy=normalizuj_nazwe(wpis.nazwa),
+                    extinf=extinf,
+                    url=wpis.url,
+                    kbps=0.0,
+                )
+            )
+            zachowane.add(klucz)
+
+        if zachowane:
+            log.info(
+                "   Utrzymano %d kanałów z hostów niedostępnych (bez testu)",
+                len(zachowane),
+            )
+
         # --- archiwum: kanały, które przestały działać ---
         dzisiaj = date.today().isoformat()
         archiwum_po: dict[str, KanalZrodlowy] = {}
         nowe_martwe = 0
         usuniete = 0
+        przywrocone = 0
 
         # 1) kanały z poprzedniej listy i z pliku dodatkowego, których nie uratowano
         for wpis in baza:
             klucz = klucz_stacji(wpis.nazwa, wpis.tvg_id, mapa_epg)
-            if klucz and klucz in grupy:
-                continue  # stacja jest w wyniku (być może z innym adresem)
+            if klucz and (klucz in grupy or klucz in zachowane):
+                continue  # stacja jest w wyniku
             if wpis.url in archiwum_po:
                 continue
             if not wpis.martwy_od:
@@ -1190,6 +1242,24 @@ async def przetworz_liste_async() -> int:
             if wpis.url in dzialajace_url:
                 log.info("   Archiwum: %r znów działa - wraca do listy", wpis.nazwa)
                 continue
+
+            # kanał z hosta, który w tym przebiegu nie odpowiedział wcale -
+            # przywracamy do listy (to nie kanał padł, tylko serwer jest nieosiągalny)
+            if _host(wpis.url) in hosty_niedostepne:
+                epg_id = dopasuj_epg(wpis, mapa_epg)
+                extinf = _wstaw_tvg_id(wpis.extinf, epg_id) if epg_id else wpis.extinf
+                wybrane.append(
+                    WybranyKanal(
+                        prio=pobierz_prio_mux(wpis.nazwa, epg_id),
+                        klucz_nazwy=normalizuj_nazwe(wpis.nazwa),
+                        extinf=extinf,
+                        url=wpis.url,
+                        kbps=0.0,
+                    )
+                )
+                przywrocone += 1
+                continue
+
             if not wpis.martwy_od:
                 wpis.martwy_od = dzisiaj
             if dni_martwosci(wpis.martwy_od) >= DNI_W_ARCHIWUM:
@@ -1200,6 +1270,24 @@ async def przetworz_liste_async() -> int:
                 usuniete += 1
                 continue
             archiwum_po[wpis.url] = wpis
+
+        if przywrocone:
+            log.info(
+                "   Archiwum: przywrócono %d kanałów z hostów niedostępnych",
+                przywrocone,
+            )
+
+        # Zabezpieczenie: jeśli w jednym przebiegu wypadła duża część bazy, to
+        # prawie na pewno awaria sieci albo zablokowanie źródła, a nie śmierć
+        # kanałów - wtedy nie ruszamy ani listy, ani archiwum.
+        prog = max(15, len(poprzednie) // 3)
+        if nowe_martwe > prog:
+            log.warning(
+                "Wypadło %d z %d kanałów (próg %d) - wygląda na awarię sieci; "
+                "nie zmieniam listy ani archiwum.",
+                nowe_martwe, len(poprzednie), prog,
+            )
+            return 1
 
         if not wybrane:
             log.error("Brak działających kanałów - NIE nadpisuję %s", OUTPUT_FILE)
