@@ -35,6 +35,6 @@ jobs:
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add gracy.m3u
+          git add gracy.m3u gracy_archiwum.m3u
           git commit -m "Automatyczna aktualizacja gracy.m3u [skip ci]" || exit 0
           git push
