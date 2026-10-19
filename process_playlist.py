@@ -26,6 +26,12 @@ Względem wersji pierwotnej poprawiono m.in.:
     i krótkotrwałe, więc manifest pobierany jest na świeżo przy każdym
     uruchomieniu (identyfikatory kanałów są w konfiguracji niżej),
   * limit połączeń globalnie i per-host, TLS weryfikowany,
+  * lista jest kumulatywna - kanały z poprzedniego gracy.m3u zostają (o ile
+    działają), a źródła online tylko dodają nowe; adres z poprzedniej listy ma
+    pierwszeństwo, więc nie ma zbędnej rotacji serwerów,
+  * kanały, które przestały działać, trafiają do gracy_archiwum.m3u z datą
+    awarii; archiwum jest sprawdzane przy każdym uruchomieniu (działające wracają
+    do listy), a po DNI_W_ARCHIWUM dniach martwy wpis jest usuwany na stałe,
   * tryb lokalny: uruchomienie z GRACY_PUSH=1 wgrywa gotową listę na GitHub przez
     API (token w GITHUB_TOKEN albo w pliku github_token.txt) - to pozwala tworzyć
     listę z polskiego adresu IP, bo TVP wydaje adresy strumieni tylko dla Polski,
@@ -53,6 +59,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import date, datetime
 from difflib import SequenceMatcher
 from urllib.parse import urljoin, urlsplit
 
@@ -82,6 +89,12 @@ INDEKSY_ZRODEL: list[tuple[str, bool]] = [
 
 EPG_URL = "https://epg.ovh/pl.xml"
 OUTPUT_FILE = os.environ.get("GRACY_OUTPUT", "gracy.m3u")
+
+# Archiwum kanałów, które przestały działać. Wpis trafia tam z datą pierwszego
+# wykrycia awarii, jest sprawdzany przy każdym uruchomieniu i wraca do listy,
+# jeśli znów zadziała. Po DNI_W_ARCHIWUM dniach martwy wpis jest usuwany na stałe.
+PLIK_ARCHIWUM = os.environ.get("GRACY_ARCHIWUM", "gracy_archiwum.m3u")
+DNI_W_ARCHIWUM = 7
 
 # --- Oficjalne źródło TVP (serwis TVP Stream / TVP VOD) --------------------
 # Każdy kanał ma w serwisie TVP identyfikator "video_id". Adres manifestu jest
@@ -114,13 +127,12 @@ TVP_TIMEOUT = 15.0
 TVP_PROBY = 3                # API TVP czasem odpowiada bez adresu - ponawiamy
 
 # --- Wgrywanie wyniku na GitHub (tryb lokalny) -----------------------------
-# Uruchomienie z GRACY_PUSH=1 powoduje, że po zapisaniu gracy.m3u skrypt wgrywa
-# go na GitHub przez API. Token bierzemy ze zmiennej GITHUB_TOKEN albo z pliku
+# Uruchomienie z GRACY_PUSH=1 powoduje, że po zapisaniu plików skrypt wgrywa je
+# na GitHub przez API. Token bierzemy ze zmiennej GITHUB_TOKEN albo z pliku
 # github_token.txt obok skryptu. Dzięki temu lista może być generowana z polskiego
 # IP (TVP wydaje adresy strumieni tylko dla adresów z Polski), a runner GitHuba
 # działa jako zapas.
 GITHUB_REPO = os.environ.get("GRACY_GITHUB_REPO", "gracy72/kodi-iptv")
-GITHUB_PATH = os.environ.get("GRACY_GITHUB_PATH", "gracy.m3u")
 GITHUB_BRANCH = os.environ.get("GRACY_GITHUB_BRANCH", "main")
 PLIK_TOKENU = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "github_token.txt"
@@ -265,6 +277,7 @@ class KanalZrodlowy:
     nazwa: str
     tvg_id: str | None
     zrodlo_pl: bool
+    martwy_od: str | None = None  # data (RRRR-MM-DD) - tylko wpisy z archiwum
 
 
 @dataclass
@@ -284,6 +297,7 @@ class WybranyKanal:
 
 _RE_TVG_ID = re.compile(r'tvg-id="([^"]*)"', re.IGNORECASE)
 _RE_TVP_M3U8 = re.compile(r'https?://\S+master\.m3u8')
+_RE_MARTWY_OD = re.compile(r'gracy-martwy-od="([^"]*)"')
 
 
 def _nazwa_z_extinf(extinf: str) -> str:
@@ -349,6 +363,81 @@ def parsuj_playliste(
         extinf = None
 
     return kanaly
+
+
+def _martwy_od_z_extinf(extinf: str) -> str | None:
+    dopasowanie = _RE_MARTWY_OD.search(extinf)
+    return dopasowanie.group(1).strip() if dopasowanie else None
+
+
+def wczytaj_liste(sciezka: str) -> list[KanalZrodlowy]:
+    """Czyta istniejącą playlistę (poprzedni wynik albo archiwum).
+
+    Brak pliku to nie błąd - pierwszy przebieg po prostu nie ma bazy.
+    """
+    try:
+        with open(sciezka, encoding="utf-8") as plik:
+            tekst = plik.read()
+    except OSError:
+        return []
+    kanaly = parsuj_playliste(tekst, True, set())
+    for kanal in kanaly:
+        kanal.martwy_od = _martwy_od_z_extinf(kanal.extinf)
+    return kanaly
+
+
+def klucz_stacji(nazwa: str, tvg_id: str | None, mapa_epg: dict[str, str]) -> str:
+    """Wspólny klucz stacji dla wpisów z pliku i ze źródeł online."""
+    if tvg_id:
+        znormalizowany = normalizuj_nazwe(tvg_id)
+        if znormalizowany and znormalizowany in mapa_epg:
+            return mapa_epg[znormalizowany]
+    epg_id = dopasuj_epg(KanalZrodlowy("", "", nazwa, tvg_id, True), mapa_epg)
+    return epg_id or normalizuj_nazwe(nazwa)
+
+
+def dni_martwosci(martwy_od: str | None) -> int:
+    """Ile dni wpis jest martwy (0, gdy data nieznana lub nieczytelna)."""
+    if not martwy_od:
+        return 0
+    for format_daty in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return (date.today() - datetime.strptime(martwy_od, format_daty).date()).days
+        except ValueError:
+            continue
+    return 0
+
+
+def _wstaw_atrybut(extinf: str, atrybut: str) -> str:
+    """Dodaje atrybut do #EXTINF (po czasie trwania)."""
+    if not extinf.startswith("#EXTINF:"):
+        return extinf
+    return re.sub(
+        r"^#EXTINF:\s*([-0-9.]+)",
+        lambda dopasowanie: f"#EXTINF:{dopasowanie.group(1)} {atrybut}",
+        extinf,
+        count=1,
+    )
+
+
+def zapisz_archiwum(sciezka: str, wpisy: list[KanalZrodlowy]) -> None:
+    """Zapisuje archiwum jako poprawną playlistę M3U (z datą awarii)."""
+    linie = [
+        "#EXTM3U",
+        "# Archiwum: kanały, które przestały działać. Sprawdzane przy każdym",
+        f"# uruchomieniu; po {DNI_W_ARCHIWUM} dniach bez powodzenia są usuwane na stałe.",
+    ]
+    for wpis in sorted(wpisy, key=lambda w: normalizuj_nazwe(w.nazwa)):
+        extinf = wpis.extinf
+        if _RE_MARTWY_OD.search(extinf):
+            extinf = _RE_MARTWY_OD.sub(
+                lambda _: f'gracy-martwy-od="{wpis.martwy_od}"', extinf, count=1
+            )
+        else:
+            extinf = _wstaw_atrybut(extinf, f'gracy-martwy-od="{wpis.martwy_od}"')
+        linie.append(extinf)
+        linie.append(wpis.url)
+    zapisz_atomowo(sciezka, "\n".join(linie) + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -874,8 +963,8 @@ def _zapytanie_github(
         return json.loads(odpowiedz.read().decode("utf-8"))
 
 
-def wgraj_na_github(sciezka: str) -> None:
-    """Wgrywa wynik na GitHub przez API (tryb lokalny, GRACY_PUSH=1).
+def wgraj_na_github(*sciezki: str) -> None:
+    """Wgrywa podane pliki na GitHub przez API (tryb lokalny, GRACY_PUSH=1).
 
     Dzięki temu lista może powstawać z polskiego adresu IP - TVP wydaje adresy
     strumieni tylko dla adresów z Polski, więc runner GitHuba ich nie dostanie.
@@ -887,11 +976,21 @@ def wgraj_na_github(sciezka: str) -> None:
             os.path.basename(PLIK_TOKENU),
         )
         return
+    for sciezka in sciezki:
+        _wgraj_plik(sciezka, token)
 
-    with open(sciezka, "rb") as plik:
-        zawartosc = plik.read()
 
-    adres = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_PATH}"
+def _wgraj_plik(sciezka: str, token: str) -> None:
+    """Wgrywa jeden plik; nazwa w repozytorium to nazwa pliku."""
+    try:
+        with open(sciezka, "rb") as plik:
+            zawartosc = plik.read()
+    except OSError as blad:
+        log.warning("GitHub: nie mogę odczytać %s (%s)", sciezka, blad)
+        return
+
+    nazwa = os.path.basename(sciezka)
+    adres = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{nazwa}"
 
     for proba in range(1, 3):
         # 1. odczyt zdalnego blob sha (i porównanie treści - bez zmian nic nie wgrywamy)
@@ -903,18 +1002,18 @@ def wgraj_na_github(sciezka: str) -> None:
             if blad.code == 404:  # pliku jeszcze nie ma
                 zdalny = {}
             else:
-                log.warning("GitHub: nie mogę odczytać pliku (%s)", blad.code)
+                log.warning("GitHub: nie mogę odczytać %s (%s)", nazwa, blad.code)
                 return
         except Exception as blad:  # noqa: BLE001
-            log.warning("GitHub: błąd sieci przy odczycie (%s)", blad)
+            log.warning("GitHub: błąd sieci przy odczycie %s (%s)", nazwa, blad)
             return
 
         if zdalny.get("sha") == _git_blob_sha(zawartosc):
-            log.info("GitHub: plik bez zmian - nic nie wgrywam")
+            log.info("GitHub: %s bez zmian - nic nie wgrywam", nazwa)
             return
 
         tresc_zadania = {
-            "message": "Aktualizacja gracy.m3u (lokalnie, z polskiego IP)",
+            "message": "Aktualizacja %s (lokalnie, z polskiego IP)" % nazwa,
             "content": base64.b64encode(zawartosc).decode("ascii"),
             "branch": GITHUB_BRANCH,
         }
@@ -928,20 +1027,22 @@ def wgraj_na_github(sciezka: str) -> None:
             )
             log.info(
                 "GitHub: wgrano %s (commit %s)",
-                GITHUB_PATH,
+                nazwa,
                 str(wynik.get("commit", {}).get("sha", "?"))[:8],
             )
             return
         except urllib.error.HTTPError as blad:
             tresc_bledu = blad.read()[:200]
             if blad.code in (409, 422) and proba < 2:
-                log.warning("GitHub: konflikt (%s) - próbuję jeszcze raz", blad.code)
+                log.warning("GitHub: konflikt %s (%s) - próbuję jeszcze raz",
+                            nazwa, blad.code)
                 time.sleep(2)
                 continue
-            log.warning("GitHub: nie udało się wgrać (%s): %s", blad.code, tresc_bledu)
+            log.warning("GitHub: nie udało się wgrać %s (%s): %s",
+                        nazwa, blad.code, tresc_bledu)
             return
         except Exception as blad:  # noqa: BLE001
-            log.warning("GitHub: błąd sieci przy wgrywaniu (%s)", blad)
+            log.warning("GitHub: błąd sieci przy wgrywaniu %s (%s)", nazwa, blad)
             return
 
 
@@ -956,8 +1057,11 @@ async def przetworz_liste_async() -> int:
     async with aiohttp.ClientSession(connector=zlacze) as session:
         mapa_epg = await pobierz_baze_epg(session)
 
+        poprzednie = wczytaj_liste(OUTPUT_FILE)
+        archiwum = wczytaj_liste(PLIK_ARCHIWUM)
+
         log.info("2. Pobieranie list M3U/M3U8 (%d źródeł)...", len(INDEKSY_ZRODEL))
-        kanaly: list[KanalZrodlowy] = []
+        ze_zrodel: list[KanalZrodlowy] = []
         widziane_url: set[str] = set()
 
         for adres, czy_pl in INDEKSY_ZRODEL:
@@ -967,15 +1071,29 @@ async def przetworz_liste_async() -> int:
                 continue
             nowe = parsuj_playliste(tekst, czy_pl, widziane_url)
             log.info("   %s -> %d kanałów", adres.rsplit("/", 1)[-1], len(nowe))
-            kanaly.extend(nowe)
+            ze_zrodel.extend(nowe)
 
-        kanaly.extend(await pobierz_kanaly_tvp(session))
+        ze_zrodel.extend(await pobierz_kanaly_tvp(session))
 
-        if not kanaly:
-            log.error("Nie pobrano żadnych kanałów - przerywam bez zapisu.")
+        log.info(
+            "   Baza: %d kanałów z poprzedniej listy, %d w archiwum, %d ze źródeł",
+            len(poprzednie), len(archiwum), len(ze_zrodel),
+        )
+
+        # testujemy wszystko: poprzednia lista + archiwum + źródła (adres tylko raz)
+        do_testu: list[KanalZrodlowy] = []
+        widziane: set[str] = set()
+        for wpis in poprzednie + archiwum + ze_zrodel:
+            if not wpis.url or wpis.url in widziane:
+                continue
+            widziane.add(wpis.url)
+            do_testu.append(wpis)
+
+        if not do_testu:
+            log.error("Brak kandydatów - przerywam bez zapisu.")
             return 1
 
-        do_testu = kanaly[:LIMIT_TESTU] if LIMIT_TESTU > 0 else kanaly
+        do_testu = do_testu[:LIMIT_TESTU] if LIMIT_TESTU > 0 else do_testu
         log.info("3. Testowanie %d strumieni...", len(do_testu))
 
         sem_globalny = asyncio.Semaphore(MAX_ROWNOLOGE)
@@ -986,44 +1104,48 @@ async def przetworz_liste_async() -> int:
         ]
         wyniki = await asyncio.gather(*zadania)
 
-        grupy: dict[str, list[tuple[float, KanalZrodlowy, str | None]]] = {}
-        dziala = 0
+        # adresy z poprzedniej listy mają pierwszeństwo (mniejsza rotacja źródeł)
+        preferowane = {wpis.url for wpis in poprzednie}
+        dzialajace_url = {
+            wpis.url for wpis, (ok, _) in zip(do_testu, wyniki) if ok
+        }
 
-        for kanal, (ok, kbps) in zip(do_testu, wyniki):
+        grupy: dict[str, list[tuple[KanalZrodlowy, float]]] = {}
+        for wpis, (ok, kbps) in zip(do_testu, wyniki):
             if not ok:
                 continue
-            dziala += 1
 
-            epg_id = dopasuj_epg(kanal, mapa_epg)
-
-            # kanał z obcego źródła musi mieć potwierdzenie polskości
-            if not kanal.zrodlo_pl and not czy_kanal_jest_polski(kanal.extinf, epg_id):
-                continue
-
-            klucz = epg_id or normalizuj_nazwe(kanal.nazwa)
+            klucz = klucz_stacji(wpis.nazwa, wpis.tvg_id, mapa_epg)
             if not klucz:
                 continue
-            grupy.setdefault(klucz, []).append((kbps, kanal, epg_id))
+
+            # kanał z obcego źródła musi mieć potwierdzenie polskości; wpisów
+            # z poprzedniej listy i z archiwum nie filtrujemy - mają zostać
+            if not wpis.zrodlo_pl and not czy_kanal_jest_polski(wpis.extinf, klucz):
+                continue
+
+            grupy.setdefault(klucz, []).append((wpis, kbps))
 
         log.info(
-            "4. Działa %d strumieni z %d, grupuję w %d stacji...",
-            dziala, len(do_testu), len(grupy),
+            "4. Działa %d strumieni, %d stacji...",
+            len(dzialajace_url), len(grupy),
         )
 
         wybrane: list[WybranyKanal] = []
-        for warianty in grupy.values():
-            warianty.sort(key=lambda element: (-element[0], element[1].extinf))
-            kbps, kanal, epg_id = warianty[0]
+        for klucz, warianty in grupy.items():
+            warianty.sort(key=lambda w: (w[0].url not in preferowane, -w[1]))
+            wpis, kbps = warianty[0]
 
-            extinf = kanal.extinf
+            epg_id = dopasuj_epg(wpis, mapa_epg)
+            extinf = wpis.extinf
             if epg_id:
                 extinf = _wstaw_tvg_id(extinf, epg_id)
 
-            prio = pobierz_prio_mux(kanal.nazwa, epg_id)
-            klucz_nazwy = normalizuj_nazwe(kanal.nazwa)
+            prio = pobierz_prio_mux(wpis.nazwa, epg_id)
+            klucz_nazwy = normalizuj_nazwe(wpis.nazwa)
             log.debug(
                 "wybrano: prio=%d klucz=%r nazwa=%r epg=%r kbps=%.0f",
-                prio, klucz_nazwy, kanal.nazwa, epg_id, kbps,
+                prio, klucz_nazwy, wpis.nazwa, epg_id, kbps,
             )
 
             wybrane.append(
@@ -1031,12 +1153,46 @@ async def przetworz_liste_async() -> int:
                     prio=prio,
                     klucz_nazwy=klucz_nazwy,
                     extinf=extinf,
-                    url=kanal.url,
+                    url=wpis.url,
                     kbps=kbps,
                 )
             )
 
         wybrane.sort(key=lambda k: (k.prio, k.klucz_nazwy, k.url))
+
+        # --- archiwum: kanały, które przestały działać ---
+        dzisiaj = date.today().isoformat()
+        archiwum_po: dict[str, KanalZrodlowy] = {}
+        nowe_martwe = 0
+        usuniete = 0
+
+        # 1) kanały z poprzedniej listy, których nie udało się uratować
+        for wpis in poprzednie:
+            klucz = klucz_stacji(wpis.nazwa, wpis.tvg_id, mapa_epg)
+            if klucz and klucz in grupy:
+                continue  # stacja jest w wyniku (być może z innym adresem)
+            if wpis.url in archiwum_po:
+                continue
+            if not wpis.martwy_od:
+                wpis.martwy_od = dzisiaj
+                nowe_martwe += 1
+            archiwum_po[wpis.url] = wpis
+
+        # 2) wcześniejsze wpisy archiwum: wracają do listy albo czekają na koniec tygodnia
+        for wpis in archiwum:
+            if wpis.url in dzialajace_url:
+                log.info("   Archiwum: %r znów działa - wraca do listy", wpis.nazwa)
+                continue
+            if not wpis.martwy_od:
+                wpis.martwy_od = dzisiaj
+            if dni_martwosci(wpis.martwy_od) >= DNI_W_ARCHIWUM:
+                log.info(
+                    "   Archiwum: usuwam na stałe %r (martwy od %s)",
+                    wpis.nazwa, wpis.martwy_od,
+                )
+                usuniete += 1
+                continue
+            archiwum_po[wpis.url] = wpis
 
         if not wybrane:
             log.error("Brak działających kanałów - NIE nadpisuję %s", OUTPUT_FILE)
@@ -1052,15 +1208,20 @@ async def przetworz_liste_async() -> int:
             linie.append(kanal.url)
 
         zapisz_atomowo(OUTPUT_FILE, "\n".join(linie) + "\n")
+        zapisz_archiwum(PLIK_ARCHIWUM, list(archiwum_po.values()))
 
         if os.environ.get("GRACY_PUSH", "").strip().lower() in ("1", "true", "tak", "yes"):
-            wgraj_na_github(OUTPUT_FILE)
+            wgraj_na_github(OUTPUT_FILE, PLIK_ARCHIWUM)
 
         log.info(
-            "Sukces: zapisano %d kanałów do %s (MUX Wrocław: %d).",
+            "Sukces: %d kanałów w %s (MUX Wrocław: %d), %d w archiwum "
+            "(nowych martwych: %d, usuniętych na stałe: %d).",
             len(uzyte_extinf),
             OUTPUT_FILE,
             sum(1 for k in wybrane if k.prio != PRIO_POZA_MUX),
+            len(archiwum_po),
+            nowe_martwe,
+            usuniete,
         )
         return 0
 
