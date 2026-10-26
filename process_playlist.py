@@ -26,22 +26,18 @@ Względem wersji pierwotnej poprawiono m.in.:
     i krótkotrwałe, więc manifest pobierany jest na świeżo przy każdym
     uruchomieniu (identyfikatory kanałów są w konfiguracji niżej),
   * limit połączeń globalnie i per-host, TLS weryfikowany,
-  * lista jest kumulatywna - kanały z poprzedniego gracy.m3u oraz z pliku
-    gracy_dodatkowe.m3u zostają (o ile działają), a źródła online tylko dodają
-    nowe; adres z poprzedniej listy ma pierwszeństwo (mniejsza rotacja serwerów),
+  * lista jest kumulatywna - kanały z poprzedniego gracy.m3u zostają (o ile
+    działają), a źródła online tylko dodają nowe; adres z poprzedniej listy ma
+    pierwszeństwo, więc nie ma zbędnej rotacji serwerów,
   * kanały, które przestały działać, trafiają do gracy_archiwum.m3u z datą
     awarii; archiwum jest sprawdzane przy każdym uruchomieniu (działające wracają
     do listy), a po DNI_W_ARCHIWUM dniach martwy wpis jest usuwany na stałe,
-  * pojedyncza porażka nie usuwa kanału - wypada z listy dopiero przy drugiej
-    z rzędu (serwery IPTV często odrzucają część żądań),
-  * kanały z serwera, z którego w danym przebiegu nie zadziałało ANI JEDNO łącze
-    (blokada geograficzna / awaria hosta), są utrzymywane w liście bez zmian,
-  * zabezpieczenie: gdy w jednym przebiegu wypadnie naraz dużo kanałów, skrypt
-    uznaje to za awarię sieci i nie zmienia ani listy, ani archiwum,
   * tryb lokalny: uruchomienie z GRACY_PUSH=1 wgrywa gotową listę na GitHub przez
     API (token w GITHUB_TOKEN albo w pliku github_token.txt) - to pozwala tworzyć
     listę z polskiego adresu IP, bo TVP wydaje adresy strumieni tylko dla Polski,
-  * zapis atomowy, sortowanie deterministyczne, nagłówek url-tvg + x-tvg-url.
+  * zapis atomowy, sortowanie deterministyczne, nagłówek url-tvg + x-tvg-url;
+    sortowanie po MUX Wrocław wykonuje się NA KOŃCU, już po dopisaniu kanałów
+    z archiwum i z hostów niedostępnych (wcześniej trafiały na koniec pliku).
 
 Wymaga: Python 3.9+ oraz aiohttp.
 """
@@ -307,7 +303,6 @@ class WybranyKanal:
 
 _RE_TVG_ID = re.compile(r'tvg-id="([^"]*)"', re.IGNORECASE)
 _RE_TVP_M3U8 = re.compile(r'https?://\S+master\.m3u8')
-_RE_MARTWY_OD = re.compile(r'gracy-martwy-od="([^"]*)"')
 
 
 def _nazwa_z_extinf(extinf: str) -> str:
@@ -375,13 +370,16 @@ def parsuj_playliste(
     return kanaly
 
 
+_RE_MARTWY_OD = re.compile(r'gracy-martwy-od="([^"]*)"')
+
+
 def _martwy_od_z_extinf(extinf: str) -> str | None:
     dopasowanie = _RE_MARTWY_OD.search(extinf)
     return dopasowanie.group(1).strip() if dopasowanie else None
 
 
 def wczytaj_liste(sciezka: str) -> list[KanalZrodlowy]:
-    """Czyta istniejącą playlistę (poprzedni wynik, archiwum, plik dodatkowy).
+    """Czyta istniejącą playlistę (poprzedni wynik albo archiwum).
 
     Brak pliku to nie błąd - pierwszy przebieg po prostu nie ma bazy.
     """
@@ -608,6 +606,20 @@ def pobierz_prio_mux(nazwa: str, epg_id: str | None) -> int:
         if klucz in MAPA_MUX:
             return MAPA_MUX[klucz]
     return PRIO_POZA_MUX
+
+
+def posortuj_wynik(kanaly: list[WybranyKanal]) -> list[WybranyKanal]:
+    """Usuwa duplikaty po #EXTINF i ustawia kolejność: MUX Wrocław, nazwa, URL.
+
+    Wywoływane NA KOŃCU, po dopisaniu kanałów z archiwum i z hostów
+    niedostępnych - inaczej te dopisane lądują na końcu pliku.
+    """
+    unikalne: dict[str, WybranyKanal] = {}
+    for kanal in kanaly:
+        poprzedni = unikalne.get(kanal.extinf)
+        if poprzedni is None or (kanal.prio, -kanal.kbps) < (poprzedni.prio, -poprzedni.kbps):
+            unikalne[kanal.extinf] = kanal
+    return sorted(unikalne.values(), key=lambda k: (k.prio, k.klucz_nazwy, k.url))
 
 
 # ---------------------------------------------------------------------------
@@ -1088,7 +1100,7 @@ async def przetworz_liste_async() -> int:
         ze_zrodel.extend(await pobierz_kanaly_tvp(session))
 
         log.info(
-            "   Baza: %d z poprzedniej listy, %d dodatkowych, %d w archiwum,"
+            "   Baza: %d kanałów z poprzedniej listy, %d dodatkowych, %d w archiwum,"
             " %d ze źródeł",
             len(poprzednie), len(dodatkowe), len(archiwum), len(ze_zrodel),
         )
@@ -1117,7 +1129,7 @@ async def przetworz_liste_async() -> int:
         ]
         wyniki = await asyncio.gather(*zadania)
 
-        # adresy z poprzedniej listy (i z pliku dodatkowego) mają pierwszeństwo
+        # adresy z poprzedniej listy mają pierwszeństwo (mniejsza rotacja źródeł)
         preferowane = {wpis.url for wpis in baza}
         dzialajace_url = {
             wpis.url for wpis, (ok, _) in zip(do_testu, wyniki) if ok
@@ -1171,8 +1183,6 @@ async def przetworz_liste_async() -> int:
                 )
             )
 
-        wybrane.sort(key=lambda k: (k.prio, k.klucz_nazwy, k.url))
-
         # --- hosty nieosiągalne z tej sieci ---------------------------------
         # Jeśli z danego serwera nie zadziałało ANI JEDNO łącze (przy co najmniej
         # 3 adresach), to prawie na pewno blokada geograficzna albo awaria hosta,
@@ -1216,7 +1226,17 @@ async def przetworz_liste_async() -> int:
                 continue
             if _host(wpis.url) not in hosty_niedostepne:
                 continue
-            dodaj_do_listy(wpis)
+            epg_id = dopasuj_epg(wpis, mapa_epg)
+            extinf = _wstaw_tvg_id(wpis.extinf, epg_id) if epg_id else wpis.extinf
+            wybrane.append(
+                WybranyKanal(
+                    prio=pobierz_prio_mux(wpis.nazwa, epg_id),
+                    klucz_nazwy=normalizuj_nazwe(wpis.nazwa),
+                    extinf=extinf,
+                    url=wpis.url,
+                    kbps=0.0,
+                )
+            )
             zachowane.add(klucz)
 
         if zachowane:
@@ -1226,9 +1246,6 @@ async def przetworz_liste_async() -> int:
             )
 
         # --- archiwum: kanały, które przestały działać ---
-        # Zasada: jedna porażka to jeszcze nie śmierć kanału (serwery IPTV często
-        # odrzucają żądania). Kanał wypada z listy dopiero przy drugiej z rzędu,
-        # a po DNI_W_ARCHIWUM dniach jest usuwany na stałe.
         dzisiaj = date.today().isoformat()
         daty_archiwum = {
             wpis.url: wpis.martwy_od for wpis in archiwum if wpis.martwy_od
@@ -1239,11 +1256,11 @@ async def przetworz_liste_async() -> int:
         przywrocone = 0
         zawieszone = 0
 
-        # 1) kanały z poprzedniej listy i z pliku dodatkowego, których nie uratowano
+        # 1) kanały z poprzedniej listy i z pliku dodatkowego, których nie udało się uratować
         for wpis in baza:
             klucz = klucz_stacji(wpis.nazwa, wpis.tvg_id, mapa_epg)
             if klucz and (klucz in grupy or klucz in zachowane):
-                continue  # stacja jest w wyniku
+                continue  # stacja jest w wyniku (być może z innym adresem)
             if wpis.url in archiwum_po or wpis.url in dzialajace_url:
                 continue
 
@@ -1257,7 +1274,7 @@ async def przetworz_liste_async() -> int:
                 dodaj_do_listy(wpis)
             archiwum_po[wpis.url] = wpis
 
-        # 2) wcześniejsze wpisy archiwum: wracają do listy, czekają albo są usuwane
+        # 2) wcześniejsze wpisy archiwum: wracają do listy albo czekają na koniec tygodnia
         for wpis in archiwum:
             if wpis.url in dzialajace_url:
                 log.info("   Archiwum: %r znów działa - wraca do listy", wpis.nazwa)
@@ -1266,9 +1283,18 @@ async def przetworz_liste_async() -> int:
             # kanał z hosta, który w tym przebiegu nie odpowiedział wcale -
             # przywracamy do listy (to nie kanał padł, tylko serwer jest nieosiągalny)
             if _host(wpis.url) in hosty_niedostepne:
-                if wpis.url not in archiwum_po:
-                    dodaj_do_listy(wpis)
-                    przywrocone += 1
+                epg_id = dopasuj_epg(wpis, mapa_epg)
+                extinf = _wstaw_tvg_id(wpis.extinf, epg_id) if epg_id else wpis.extinf
+                wybrane.append(
+                    WybranyKanal(
+                        prio=pobierz_prio_mux(wpis.nazwa, epg_id),
+                        klucz_nazwy=normalizuj_nazwe(wpis.nazwa),
+                        extinf=extinf,
+                        url=wpis.url,
+                        kbps=0.0,
+                    )
+                )
+                przywrocone += 1
                 continue
 
             if not wpis.martwy_od:
@@ -1277,7 +1303,6 @@ async def przetworz_liste_async() -> int:
                 if wpis.url not in archiwum_po:
                     zawieszone += 1
                     dodaj_do_listy(wpis)
-
             if dni_martwosci(wpis.martwy_od) >= DNI_W_ARCHIWUM:
                 log.info(
                     "   Archiwum: usuwam na stałe %r (martwy od %s)",
@@ -1310,16 +1335,18 @@ async def przetworz_liste_async() -> int:
             )
             return 1
 
+        # --- ostateczna kolejnosc: MUX Wroclaw --------------------------------
+        # Sortowanie MUSI byc tutaj: bloki wyzej dopisuja kanaly z archiwum,
+        # z hostow niedostepnych oraz zawieszone (dodaj_do_listy). Wczesniejsze
+        # sortowanie zostawialo je na koncu pliku, poza kolejnoscia MUX.
+        wybrane = posortuj_wynik(wybrane)
+
         if not wybrane:
             log.error("Brak działających kanałów - NIE nadpisuję %s", OUTPUT_FILE)
             return 1
 
         linie = [f'#EXTM3U url-tvg="{EPG_URL}" x-tvg-url="{EPG_URL}"']
-        uzyte_extinf: set[str] = set()
         for kanal in wybrane:
-            if kanal.extinf in uzyte_extinf:
-                continue
-            uzyte_extinf.add(kanal.extinf)
             linie.append(kanal.extinf)
             linie.append(kanal.url)
 
@@ -1332,7 +1359,7 @@ async def przetworz_liste_async() -> int:
         log.info(
             "Sukces: %d kanałów w %s (MUX Wrocław: %d), %d w archiwum "
             "(nowych martwych: %d, usuniętych na stałe: %d).",
-            len(uzyte_extinf),
+            len(wybrane),
             OUTPUT_FILE,
             sum(1 for k in wybrane if k.prio != PRIO_POZA_MUX),
             len(archiwum_po),
