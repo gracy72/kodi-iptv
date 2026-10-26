@@ -26,6 +26,8 @@ jobs:
     steps:
       - name: Pobierz kod repozytorium
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # pelna historia - krok nizej sprawdza date commita gracy.m3u
 
       - name: Czy to pora na aktualizacje
         id: pora
