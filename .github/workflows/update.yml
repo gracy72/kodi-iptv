@@ -1,14 +1,20 @@
 name: Automatyczna aktualizacja IPTV
 
+# GitHub nie odpala zadan z harmonogramu punktualnie - przy tym repozytorium
+# przebiegi cron '0 2 * * *' startowaly ok. 4-7 godzin pozniej (zamiast 4:00
+# czasu polskiego wychodzilo 9:00-11:00). Dlatego zamiast jednego sztywnego
+# terminu uruchamiamy sie co godzine, a krok "Czy to pora na aktualizacje"
+# przepuszcza tylko pierwszy przebieg po 3:00 rano i tylko raz na dobe.
+# Efekt: lista odswieza sie rano (najczesciej tuz po 3:00-4:00), niezaleznie
+# od tego, jak bardzo GitHub opozni harmonogram.
+
 on:
   schedule:
-    # 2:00 UTC = 4:00 czasu polskiego letniego (CEST), 3:00 czasu zimowego (CET)
-    - cron: '0 2 * * *'
+    - cron: '0 * * * *'
   workflow_dispatch:      # Pozwala na reczne uruchomienie przyciskiem
   push:
     paths:
       - 'process_playlist.py'          # przebuduj liste, gdy zmieni sie skrypt
-      - '.github/workflows/update.yml' # ...albo sam workflow (reczne wznowienie)
 
 jobs:
   auto-update:
@@ -21,18 +27,42 @@ jobs:
       - name: Pobierz kod repozytorium
         uses: actions/checkout@v4
 
+      - name: Czy to pora na aktualizacje
+        id: pora
+        if: github.event_name == 'schedule'
+        run: |
+          export TZ=Europe/Warsaw
+          GODZINA=$(date +%H)
+          DZIS=$(date +%F)
+          OSTATNIA=$(git log -1 --format=%cd --date=format:%F -- gracy.m3u)
+          echo "godzina lokalna: $GODZINA, dzis: $DZIS, ostatnia aktualizacja gracy.m3u: $OSTATNIA"
+          if [ "$GODZINA" -lt 3 ]; then
+            echo "przed 3:00 rano - czekam na kolejne uruchomienie"
+            echo "czy=nie" >> "$GITHUB_OUTPUT"
+          elif [ "$OSTATNIA" = "$DZIS" ]; then
+            echo "lista zbudowana juz dzisiaj - pomijam"
+            echo "czy=nie" >> "$GITHUB_OUTPUT"
+          else
+            echo "pora na aktualizacje"
+            echo "czy=tak" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Konfiguracja Python 3.13
+        if: github.event_name != 'schedule' || steps.pora.outputs.czy == 'tak'
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
 
       - name: Instalacja biblioteki aiohttp
+        if: github.event_name != 'schedule' || steps.pora.outputs.czy == 'tak'
         run: pip install aiohttp
 
       - name: Uruchom skrypt process_playlist.py
+        if: github.event_name != 'schedule' || steps.pora.outputs.czy == 'tak'
         run: python process_playlist.py
 
       - name: Zapisz zmiany w repozytorium
+        if: github.event_name != 'schedule' || steps.pora.outputs.czy == 'tak'
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
