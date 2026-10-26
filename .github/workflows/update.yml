@@ -34,7 +34,7 @@ jobs:
         if: github.event_name == 'schedule'
         run: |
           export TZ=Europe/Warsaw
-          GODZINA=$(date +%H)
+          GODZINA=$(date +%-H)    # %-H: bez zera na poczatku (inaczej "08" jest osemkowe)
           DZIS=$(date +%F)
           OSTATNIA=$(git log -1 --format=%cd --date=format:%F -- gracy.m3u)
           echo "godzina lokalna: $GODZINA, dzis: $DZIS, ostatnia aktualizacja gracy.m3u: $OSTATNIA"
