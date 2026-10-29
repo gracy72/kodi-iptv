@@ -1272,7 +1272,7 @@ async def przetworz_liste_async() -> int:
                 nowe_martwe += 1
                 zawieszone += 1
                 dodaj_do_listy(wpis)
-            archiwum_po[wpis.url] = wpis
+                archiwum_po[wpis.url] = wpis
 
         # 2) wcześniejsze wpisy archiwum: wracają do listy albo czekają na koniec tygodnia
         for wpis in archiwum:
