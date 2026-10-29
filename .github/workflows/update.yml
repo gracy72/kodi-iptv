@@ -66,6 +66,19 @@ jobs:
       - name: Zapisz zmiany w repozytorium
         if: github.event_name != 'schedule' || steps.pora.outputs.czy == 'tak'
         run: |
+          # Zabezpieczenie: runner GitHuba (IP z USA) nie dociera do polskich/
+          # francuskich hostow OVH (57.128.*, 92.114.85.87), wiec w chmurze czesc
+          # dzialajacych kanalow wypada, a martwe sa utrzymywane "bez testu".
+          # Nie pozwalamy chmurze nadpisac pelniejszej listy ubozsza - jezeli
+          # nowa lista ma mniej kanalow niz ta juz w repo, przywracamy wersje z repo.
+          STARE=$(git show HEAD:gracy.m3u 2>/dev/null | grep -c '^#EXTINF' || echo 0)
+          NOWE=$(grep -c '^#EXTINF' gracy.m3u || echo 0)
+          echo "kanaly w repo: $STARE, kanaly wygenerowane: $NOWE"
+          if [ "$NOWE" -lt "$STARE" ]; then
+            echo "Chmura wygenerowala mniej kanalow - przywracam wersje z repo (bez zmiany)"
+            git checkout -- gracy.m3u gracy_archiwum.m3u
+          fi
+
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add gracy.m3u gracy_archiwum.m3u
