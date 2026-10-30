@@ -1,0 +1,36 @@
+name: TEST generowanie w chmurze (artefakt, bez commit)
+
+# PLIK TYMCZASOWY do testu: generator na runnerze GitHuba (IP USA),
+# wynik jako artefakt, BEZ commitowania do repo (main nietkniete).
+# Po tescie plik usuwamy.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-cloud:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pobierz kod
+        uses: actions/checkout@v4
+      - name: Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: aiohttp
+        run: pip install aiohttp
+      - name: Uruchom generator
+        run: python process_playlist.py
+      - name: Pokaz liczby
+        if: always()
+        run: |
+          echo "KANALY gracy.m3u: $(grep -c '^#EXTINF' gracy.m3u || echo 0)"
+          echo "KANALY archiwum: $(grep -c '^#EXTINF' gracy_archiwum.m3u || echo 0)"
+      - name: Artefakt z wynikiem
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gracy-test-cloud
+          path: |
+            gracy.m3u
+            gracy_archiwum.m3u
