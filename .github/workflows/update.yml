@@ -1,15 +1,14 @@
 name: Automatyczna aktualizacja IPTV
 
-# ZAMROZONE (2026-10-29): aktualizacje wykonuje teraz WYLACZNIE lokalny
-# program z polskiego IP (katalog gracy na komputerze uzytkownika), ktory
-# wgrywa gracy.m3u i gracy_archiwum.m3u bezposrednio przez API GitHuba.
-# Runner GitHuba (IP z USA) nie dociera do geoblokowanych hostow TVP/OVH,
-# przez co chmura generowala ubozsza liste. Dlatego usunieto automatyczne
-# wyzwalacze (schedule i push). Workflow zostaje tylko jako reczny zapas
-# (workflow_dispatch) z zabezpieczeniem przed nadpisaniem pelniejszej listy.
+# Aktualizacje wykonuje GitHub Actions codziennie o 03:00 UTC (04:00 czasu
+# polskiego). Reczne uruchomienie: zakladka Actions -> workflow_dispatch.
+# Lokalny program (katalog gracy) sluzy tylko do aktualizacji recznej z
+# polskiego IP - furtka ratunkowa dla kanalow geoblokowanych z USA.
 
 on:
-  workflow_dispatch:      # tylko recznie, z przycisku w GitHub
+  schedule:
+    - cron: '0 3 * * *'   # 03:00 UTC = 04:00 czasu polskiego (zima)
+  workflow_dispatch:      # reczne uruchomienie z przycisku w GitHub
 
 jobs:
   auto-update:
@@ -22,7 +21,7 @@ jobs:
       - name: Pobierz kod repozytorium
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0    # pelna historia - do sprawdzenia daty commita gracy.m3u
+          fetch-depth: 0
 
       - name: Konfiguracja Python 3.13
         uses: actions/setup-python@v5
@@ -37,14 +36,15 @@ jobs:
 
       - name: Zapisz zmiany w repozytorium
         run: |
-          # Zabezpieczenie: nie pozwalamy chmurze nadpisac pelniejszej listy
-          # ubozsza - jezeli nowa lista ma mniej kanalow niz ta w repo,
-          # przywracamy wersje z repo.
+          # Zabezpieczenie: nie nadpisujemy listy, jezeli nowa ma mniej niz
+          # 85% kanalow starej (to oznaka awarii zrodel, nie normalnej
+          # zmiany). Drobne wahania (kilka kanalow) przechodza normalnie.
           STARE=$(git show HEAD:gracy.m3u 2>/dev/null | grep -c '^#EXTINF' || echo 0)
           NOWE=$(grep -c '^#EXTINF' gracy.m3u || echo 0)
-          echo "kanaly w repo: $STARE, kanaly wygenerowane: $NOWE"
-          if [ "$NOWE" -lt "$STARE" ]; then
-            echo "Chmura wygenerowala mniej kanalow - przywracam wersje z repo (bez zmiany)"
+          PROG=$((STARE * 85 / 100))
+          echo "kanaly w repo: $STARE, wygenerowane: $NOWE, prog 85%: $PROG"
+          if [ "$NOWE" -lt "$PROG" ]; then
+            echo "Spadek ponizej 85% - przywracam wersje z repo (bez zmiany)"
             git checkout -- gracy.m3u gracy_archiwum.m3u
           fi
 
