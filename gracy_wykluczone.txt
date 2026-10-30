@@ -1,0 +1,4 @@
+# Kanały wykluczone z aktywnej listy (trafiają do archiwum, nie do Kodi).
+# Wzorzec = fragment nazwy (bez wielkości liter) albo pełny URL.
+# Przykład: Sci Fi (Poland) - serwer odpowiada, ale strumień się rwie/klatkuje.
+Sci Fi (Poland)
