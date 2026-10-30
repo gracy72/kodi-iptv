@@ -32,6 +32,9 @@ Względem wersji pierwotnej poprawiono m.in.:
   * kanały, które przestały działać, trafiają do gracy_archiwum.m3u z datą
     awarii; archiwum jest sprawdzane przy każdym uruchomieniu (działające wracają
     do listy), a po DNI_W_ARCHIWUM dniach martwy wpis jest usuwany na stałe,
+  * kanały z hostów CAŁKOWICIE nieosiągalnych oraz wpisy z gracy_wykluczone.txt
+    NIE trafiają do aktywnej listy - idą do archiwum (wracają, gdy host znów
+    odpowie albo gdy usunie się wpis z pliku wykluczeń),
   * tryb lokalny: uruchomienie z GRACY_PUSH=1 wgrywa gotową listę na GitHub przez
     API (token w GITHUB_TOKEN albo w pliku github_token.txt) - to pozwala tworzyć
     listę z polskiego adresu IP, bo TVP wydaje adresy strumieni tylko dla Polski,
@@ -96,7 +99,12 @@ OUTPUT_FILE = os.environ.get("GRACY_OUTPUT", "gracy.m3u")
 # wykrycia awarii, jest sprawdzany przy każdym uruchomieniu i wraca do listy,
 # jeśli znów zadziała. Po DNI_W_ARCHIWUM dniach martwy wpis jest usuwany na stałe.
 PLIK_ARCHIWUM = os.environ.get("GRACY_ARCHIWUM", "gracy_archiwum.m3u")
-DNI_W_ARCHIWUM = 7
+DNI_W_ARCHIWUM = int(os.environ.get("GRACY_DNI_ARCHIWUM", "100"))
+
+# Kanay wykluczone z aktywnej listy mimo ze serwer odpowiada (np. za wolne,
+# niestabilne - "nie idzie ogladac"). Jedna regula w linii: fragment nazwy
+# (bez wielkosci liter) albo pelny URL. Trafiaja do archiwum, nie do listy.
+PLIK_WYKLUCZONE = os.environ.get("GRACY_WYKLUCZONE", "gracy_wykluczone.txt")
 
 # Własne kanały, których nie ma (chwilowo) w źródłach - próbowane przy każdym
 # uruchomieniu, tak samo jak kanały z poprzedniej listy.
@@ -414,6 +422,32 @@ def dni_martwosci(martwy_od: str | None) -> int:
         except ValueError:
             continue
     return 0
+
+
+def wczytaj_wykluczone(sciezka: str) -> list[str]:
+    """Wzorce kanałów wykluczonych (fragment nazwy lub pełny URL)."""
+    try:
+        with open(sciezka, encoding="utf-8") as f:
+            return [
+                l.strip().lower()
+                for l in f
+                if l.strip() and not l.strip().startswith("#")
+            ]
+    except OSError:
+        return []
+
+
+def czy_wykluczony(wpis: "KanalZrodlowy", wzorce: list[str]) -> bool:
+    if not wzorce:
+        return False
+    nazwa = (wpis.nazwa or "").lower()
+    for wzor in wzorce:
+        if wzor.startswith("http"):
+            if wpis.url == wzor:
+                return True
+        elif wzor in nazwa:
+            return True
+    return False
 
 
 def _wstaw_atrybut(extinf: str, atrybut: str) -> str:
@@ -1074,6 +1108,7 @@ def _wgraj_plik(sciezka: str, token: str) -> None:
 
 
 async def przetworz_liste_async() -> int:
+    wzorce_wykluczen = wczytaj_wykluczone(PLIK_WYKLUCZONE)
     zlacze = aiohttp.TCPConnector(limit=MAX_ROWNOLOGE * 2, limit_per_host=MAX_NA_HOST)
 
     async with aiohttp.ClientSession(connector=zlacze) as session:
@@ -1135,9 +1170,16 @@ async def przetworz_liste_async() -> int:
             wpis.url for wpis, (ok, _) in zip(do_testu, wyniki) if ok
         }
 
+        wykluczone_urls = {
+            wpis.url for wpis in baza + archiwum + ze_zrodel
+            if czy_wykluczony(wpis, wzorce_wykluczen)
+        }
+
         grupy: dict[str, list[tuple[KanalZrodlowy, float]]] = {}
         for wpis, (ok, kbps) in zip(do_testu, wyniki):
             if not ok:
+                continue
+            if wpis.url in wykluczone_urls:
                 continue
 
             klucz = klucz_stacji(wpis.nazwa, wpis.tvg_id, mapa_epg)
@@ -1185,8 +1227,10 @@ async def przetworz_liste_async() -> int:
 
         # --- hosty nieosiągalne z tej sieci ---------------------------------
         # Jeśli z danego serwera nie zadziałało ANI JEDNO łącze (przy co najmniej
-        # 3 adresach), to prawie na pewno blokada geograficzna albo awaria hosta,
-        # a nie śmierć kanałów. Takich kanałów nie wyrzucamy i nie archiwizujemy.
+        # 10 adresach), to prawie na pewno awaria/blokada dedykowanego serwera,
+        # a nie śmierć kanałów. Takich kanałów NIE pokazujemy w aktywnej liście
+        # (w Kodi byłyby martwymi pozycjami) - idą do archiwum i wrócą, gdy host
+        # znów odpowie.
         statystyki_hostow: dict[str, list[int]] = {}
         for wpis, (ok, _) in zip(do_testu, wyniki):
             licznik = statystyki_hostow.setdefault(_host(wpis.url), [0, 0])
@@ -1196,15 +1240,13 @@ async def przetworz_liste_async() -> int:
 
         hosty_niedostepne = {
             host for host, (razem, dziala) in statystyki_hostow.items()
-            if razem >= 3 and dziala == 0
+            if razem >= 10 and dziala == 0
         }
         if hosty_niedostepne:
             log.warning(
                 "   Niedostępne z tej sieci (%d): %s",
                 len(hosty_niedostepne), ", ".join(sorted(hosty_niedostepne)[:6]),
             )
-
-        zachowane: set[str] = set()
 
         def dodaj_do_listy(wpis: KanalZrodlowy) -> None:
             """Dopisuje kanał do wyniku bez testu (URL zostaje bez zmian)."""
@@ -1220,31 +1262,6 @@ async def przetworz_liste_async() -> int:
                 )
             )
 
-        for wpis in baza:
-            klucz = klucz_stacji(wpis.nazwa, wpis.tvg_id, mapa_epg)
-            if not klucz or klucz in grupy or klucz in zachowane:
-                continue
-            if _host(wpis.url) not in hosty_niedostepne:
-                continue
-            epg_id = dopasuj_epg(wpis, mapa_epg)
-            extinf = _wstaw_tvg_id(wpis.extinf, epg_id) if epg_id else wpis.extinf
-            wybrane.append(
-                WybranyKanal(
-                    prio=pobierz_prio_mux(wpis.nazwa, epg_id),
-                    klucz_nazwy=normalizuj_nazwe(wpis.nazwa),
-                    extinf=extinf,
-                    url=wpis.url,
-                    kbps=0.0,
-                )
-            )
-            zachowane.add(klucz)
-
-        if zachowane:
-            log.info(
-                "   Utrzymano %d kanałów z hostów niedostępnych (bez testu)",
-                len(zachowane),
-            )
-
         # --- archiwum: kanały, które przestały działać ---
         dzisiaj = date.today().isoformat()
         daty_archiwum = {
@@ -1253,19 +1270,53 @@ async def przetworz_liste_async() -> int:
         archiwum_po: dict[str, KanalZrodlowy] = {}
         nowe_martwe = 0
         usuniete = 0
-        przywrocone = 0
         zawieszone = 0
+
+        # 0) kanały z pliku wykluczeń: zawsze do archiwum, nigdy do listy
+        wykluczone_wpisy: dict[str, KanalZrodlowy] = {}
+        for wpis in baza + archiwum + ze_zrodel:
+            if wpis.url in wykluczone_urls and wpis.url not in wykluczone_wpisy:
+                wykluczone_wpisy[wpis.url] = wpis
+        do_archiwum_wykl = 0
+        for url, wpis in wykluczone_wpisy.items():
+            wpis.martwy_od = daty_archiwum.get(url) or dzisiaj
+            if dni_martwosci(wpis.martwy_od) >= DNI_W_ARCHIWUM:
+                log.info(
+                    "   Archiwum: usuwam na stałe %r (martwy od %s)",
+                    wpis.nazwa, wpis.martwy_od,
+                )
+                usuniete += 1
+                continue
+            archiwum_po[url] = wpis
+            do_archiwum_wykl += 1
+
+        do_archiwum_host = 0
 
         # 1) kanały z poprzedniej listy i z pliku dodatkowego, których nie udało się uratować
         for wpis in baza:
+            if wpis.url in wykluczone_wpisy:
+                continue
             klucz = klucz_stacji(wpis.nazwa, wpis.tvg_id, mapa_epg)
-            if klucz and (klucz in grupy or klucz in zachowane):
+            if klucz and klucz in grupy:
                 continue  # stacja jest w wyniku (być może z innym adresem)
             if wpis.url in archiwum_po or wpis.url in dzialajace_url:
                 continue
 
             poprzednia_data = daty_archiwum.get(wpis.url)
             wpis.martwy_od = poprzednia_data or dzisiaj
+
+            if _host(wpis.url) in hosty_niedostepne:
+                # host nieosiągalny: do archiwum, nie do listy, bez liczenia jako nowa śmierć
+                do_archiwum_host += 1
+                if dni_martwosci(wpis.martwy_od) >= DNI_W_ARCHIWUM:
+                    log.info(
+                        "   Archiwum: usuwam na stałe %r (martwy od %s)",
+                        wpis.nazwa, wpis.martwy_od,
+                    )
+                    usuniete += 1
+                    continue
+                archiwum_po[wpis.url] = wpis
+                continue
 
             if poprzednia_data is None:
                 # pierwsza porażka: kanał ZOSTAJE w liście, zapisujemy tylko datę
@@ -1274,27 +1325,29 @@ async def przetworz_liste_async() -> int:
                 dodaj_do_listy(wpis)
                 archiwum_po[wpis.url] = wpis
 
-        # 2) wcześniejsze wpisy archiwum: wracają do listy albo czekają na koniec tygodnia
+        # 2) wcześniejsze wpisy archiwum: wracają do listy albo czekają w archiwum
         for wpis in archiwum:
+            if wpis.url in wykluczone_urls:
+                continue  # obsłużone w bloku 0 (wykluczone)
             if wpis.url in dzialajace_url:
                 log.info("   Archiwum: %r znów działa - wraca do listy", wpis.nazwa)
                 continue
 
             # kanał z hosta, który w tym przebiegu nie odpowiedział wcale -
-            # przywracamy do listy (to nie kanał padł, tylko serwer jest nieosiągalny)
+            # zostaje w archiwum (nie pokazujemy martwej pozycji w Kodi),
+            # wróci automatycznie, gdy host znów odpowie
             if _host(wpis.url) in hosty_niedostepne:
-                epg_id = dopasuj_epg(wpis, mapa_epg)
-                extinf = _wstaw_tvg_id(wpis.extinf, epg_id) if epg_id else wpis.extinf
-                wybrane.append(
-                    WybranyKanal(
-                        prio=pobierz_prio_mux(wpis.nazwa, epg_id),
-                        klucz_nazwy=normalizuj_nazwe(wpis.nazwa),
-                        extinf=extinf,
-                        url=wpis.url,
-                        kbps=0.0,
+                if not wpis.martwy_od:
+                    wpis.martwy_od = dzisiaj
+                do_archiwum_host += 1
+                if dni_martwosci(wpis.martwy_od) >= DNI_W_ARCHIWUM:
+                    log.info(
+                        "   Archiwum: usuwam na stałe %r (martwy od %s)",
+                        wpis.nazwa, wpis.martwy_od,
                     )
-                )
-                przywrocone += 1
+                    usuniete += 1
+                    continue
+                archiwum_po[wpis.url] = wpis
                 continue
 
             if not wpis.martwy_od:
@@ -1312,10 +1365,15 @@ async def przetworz_liste_async() -> int:
                 continue
             archiwum_po[wpis.url] = wpis
 
-        if przywrocone:
+        if do_archiwum_host:
             log.info(
-                "   Archiwum: przywrócono %d kanałów z hostów niedostępnych",
-                przywrocone,
+                "   Hosty niedostępne: %d kanałów przeniesiono do archiwum (bez listy)",
+                do_archiwum_host,
+            )
+        if do_archiwum_wykl:
+            log.info(
+                "   Wykluczone: %d kanałów w archiwum (nie pokazywane w liście)",
+                do_archiwum_wykl,
             )
         if zawieszone:
             log.info(
