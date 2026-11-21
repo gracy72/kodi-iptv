@@ -29,8 +29,6 @@ http://57.128.231.171:8080/307/index.m3u8
 http://57.128.231.171:8080/306/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-30" tvg-id="BBC Lifestyle" tvg-logo="https://i.imgur.com/9mzJJ3y.png" group-title="Lifestyle",BBC Lifestyle Poland (1080p)
 http://57.128.231.171:8080/305/index.m3u8
-#EXTINF:-1 gracy-martwy-od="2026-11-14" tvg-id="BTB3.pl@HD" tvg-logo="https://i.imgur.com/Z193940.png" group-title="General",BTB 3 (1080p)
-https://emisja3.btb.j00r.us/iptv/session/3/live.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-30" tvg-id="Canal+ 360" tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/Canal360_1920x1080.png/960px-Canal360_1920x1080.png" group-title="Family",CANAL+ 360 (576i)
 http://92.114.85.87:8019/play/a003/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-30" tvg-id="Canal+ Dokument" tvg-logo="https://i.imgur.com/La6WF7D.png" group-title="Documentary",Canal+ Dokument (576i)
@@ -103,10 +101,14 @@ http://57.128.231.171:8080/291/index.m3u8
 http://57.128.231.171:8080/262/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-30" tvg-id="FightBox" tvg-logo="https://i.imgur.com/mRsnztA.png" group-title="Sports",FightBox Poland (576i)
 http://92.114.85.87:8003/play/a00b/index.m3u8
+#EXTINF:-1 gracy-martwy-od="2026-11-21" tvg-id="FILMBOX+ Action" tvg-logo="https://spiintl.com/data/files/kcfinderUploadDir/images/filmboxplus/filmbox%2Baction.png" group-title="Movies",FILMBOX+ Action (720p)
+http://92.114.85.87:8008/play/a007/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-11-17" tvg-id="FILMBOX+ Comedy" tvg-logo="https://spiintl.com/data/files/kcfinderUploadDir/images/filmboxplus/filmbox%2Bcomedy.png" group-title="Movies",FILMBOX+ Comedy (720p)
 http://92.114.85.87:8008/play/a009/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-29" tvg-id="FILMBOX+ Emotion" tvg-logo="https://spiintl.com/data/files/kcfinderUploadDir/images/filmboxplus/filmbox%2Bemotion.png" group-title="Movies",FILMBOX+ Emotion (720p)
 http://92.114.85.87:8008/play/a008/index.m3u8
+#EXTINF:-1 gracy-martwy-od="2026-11-21" tvg-id="FILMBOX+ Festival" tvg-logo="https://spiintl.com/data/files/kcfinderUploadDir/images/filmboxplus/filmbox%2Bfestival.png" group-title="Movies",FILMBOX+ Festival Poland
+http://92.114.85.87:8018/play/a009/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-30" tvg-id="FILMBOX+ One" tvg-logo="https://spiintl.com/data/files/kcfinderUploadDir/images/filmboxplus/filmbox%2Bone.png" group-title="Movies",FILMBOX+ One (1080p)
 http://57.128.231.171:8080/236/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-30" tvg-id="Food Network" tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/f/f9/Food_Network_New_Logo.png/960px-Food_Network_New_Logo.png" group-title="Cooking",Food Network (Poland) (1080p)
@@ -147,8 +149,6 @@ http://92.114.85.87:8006/play/a00a/index.m3u8
 http://92.114.85.87:8014/play/a006/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-11-19" tvg-id="BBC World News" tvg-logo="https://provider-static.plex.tv/epg/cms/production/2e3bf0d9-3ca6-4f65-b1d4-f180ef725d96/NewsWorld_logo_dark_-_Angela_Chan.png" group-title="News",NewsWorld (1080p)
 https://amg01076-lightning-amg01076c5-rakuten-us-1788.playouts.now.amagi.tv/playlist/amg01076-lightning-newsworld-rakutenus/playlist.m3u8
-#EXTINF:-1 gracy-martwy-od="2026-11-17" tvg-id="Nickelodeon" tvg-logo="https://i.imgur.com/E84jnP8.png" group-title="Kids",Nickelodeon (Poland) (576i)
-http://92.114.85.87:8013/play/a005/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-11-20" tvg-id="Nick Jr." tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Nick_Jr._logo_2023_(outline).svg/960px-Nick_Jr._logo_2023_(outline).svg.png" group-title="Kids",Nick Jr. (Poland) (576i)
 http://92.114.85.87:8013/play/a004/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-11-12" tvg-id="NOWA TV" tvg-logo="https://i.imgur.com/8cHK49r.png" group-title="General",Nowa TV (1080p)
@@ -191,8 +191,6 @@ http://57.128.210.196:8080/192/index.m3u8
 http://57.128.210.196:8080/194/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-30" tvg-id="Polsat Viasat Nature" tvg-logo="https://i.imgur.com/TUcM0oS.png" group-title="Documentary",Polsat Viasat Nature
 http://92.114.85.87:8016/play/a004/index.m3u8
-#EXTINF:-1 gracy-martwy-od="2026-11-20" tvg-id="Polsat X" tvg-logo="https://i.imgur.com/8juCHsb.png" group-title="Undefined",Polsat X
-https://bingbang.kotmiuaczek.workers.dev/?id=1594464
 #EXTINF:-1 gracy-martwy-od="2026-11-11" tvg-id="RadioRAM.pl@HD" tvg-logo="https://i.ibb.co/LXbchP5q/logo-1.png" group-title="Music",Radio RAM (1080p)
 https://1888165924.rsc.cdn77.org/live/RadioRAM/playlist.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-27" tvg-id="ROMANCE TV" tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/d/d1/Romance_TV_Logo_10.2019.svg/960px-Romance_TV_Logo_10.2019.svg.png" group-title="Undefined",Romance TV (576i)
@@ -201,6 +199,8 @@ http://92.114.85.87:8009/play/a00a/index.m3u8
 http://92.114.85.87:8003/play/a007/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-11-19" tvg-id="Stars TV" tvg-logo="https://i.imgur.com/NdITPCk.png" group-title="Undefined",Stars TV (1080p)
 http://92.114.85.87:8001/play/a00o/index.m3u8
+#EXTINF:-1 gracy-martwy-od="2026-11-21" tvg-id="Stopklatka TV" tvg-logo="https://i.imgur.com/qqNsIkx.png" group-title="Undefined",Stopklatka TV
+http://92.114.85.87:8018/play/a004/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-30" tvg-id="Sundance TV" tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/0/01/SundanceTV_2014.svg/960px-SundanceTV_2014.svg.png" group-title="Movies",Sundance TV (Poland) (576i)
 http://92.114.85.87:8003/play/a004/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-30" tvg-id="Super Polsat" tvg-logo="https://i.imgur.com/6KXJRHc.png" group-title="General",Super Polsat
@@ -209,8 +209,6 @@ http://92.114.85.87:8004/play/a00c/index.m3u8
 http://92.114.85.87:8010/play/a00l/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-26" tvg-id="TeenNick" tvg-logo="https://i.imgur.com/KZq73CE.png" group-title="Kids",TeenNick (Poland) (576i)
 http://92.114.85.87:8010/play/a009/index.m3u8
-#EXTINF:-1 gracy-martwy-od="2026-11-20" tvg-id="Tele 5" tvg-logo="https://i.imgur.com/36ZNsIL.png" group-title="Undefined",Tele5 (576i)
-http://92.114.85.87:8012/play/a005/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-28" tvg-id="Teletoon" tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/T%C3%A9l%C3%A9toon%2B_Logo.png/960px-T%C3%A9l%C3%A9toon%2B_Logo.png" group-title="Animation;Kids",Teletoon+ HD (1080i)
 http://92.114.85.87:8009/play/a006/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-11-19" tvg-id="TelewizjaRelax.pl@SD" tvg-logo="https://i.imgur.com/dejnH0O.png" group-title="General",Telewizja Relax (1080p)
@@ -233,8 +231,6 @@ http://57.128.210.196:8080/144/index.m3u8
 http://57.128.210.196:8080/143/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-26" tvg-id="TVP 3 Warszawa" tvg-logo="https://i.imgur.com/AfZOO8U.jpg" http-user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36" group-title="Undefined",TVP 3 Warszawa
 http://92.114.85.87:8010/play/a006/index.m3u8
-#EXTINF:-1 gracy-martwy-od="2026-11-17" tvg-id="TVP ABC" tvg-logo="https://i.imgur.com/wP2mpfM.png" group-title="Kids",TVP ABC (576i)
-http://92.114.85.87:8002/play/a00b/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-11-01" tvg-id="TVP Dokument" group-title="TVP (oficjalny)",TVP Dokument
 https://sdt-l3-05-206.tvp.pl/token/video/live/53795159/20261030/3157221225/e9f25dda-b045-4281-88e9-20f57b778711/master.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-11-18" tvg-id="TVP Historia" tvg-logo="https://i.imgur.com/Bc4QZiy.png" group-title="Undefined",TVP Historia (576i)
@@ -269,3 +265,5 @@ http://92.114.85.87:8016/play/a00a/index.m3u8
 http://57.128.231.171:8080/122/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-30" tvg-id="Wydarzenia 24" tvg-logo="https://i.imgur.com/uYpUnHP.png" group-title="News",Wydarzenia 24 (576i)
 http://92.114.85.87:8016/play/a007/index.m3u8
+#EXTINF:-1 gracy-martwy-od="2026-11-21" tvg-id="ZOOM TV" tvg-logo="https://i.imgur.com/UtZM4zm.png" group-title="Undefined",Zoom TV (576i)
+http://92.114.85.87:8001/play/a00y/index.m3u8
