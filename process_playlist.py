@@ -386,6 +386,19 @@ def _martwy_od_z_extinf(extinf: str) -> str | None:
     return dopasowanie.group(1).strip() if dopasowanie else None
 
 
+_RE_MARTWY_OD_ZE_SPACJA = re.compile(r'\s*gracy-martwy-od="[^"]*"')
+
+
+def _usun_date_martwoty(extinf: str) -> str:
+    """Usuwa atrybut gracy-martwy-od z wpisu trafiajacego na liste.
+
+    Wpis, ktory ozyl, wraca na liste bez daty awarii. Dzieki temu, gdy
+    znow padnie, licznik DNI_W_ARCHIWUM liczy sie od nowej daty, a nie
+    od daty zapisanej kiedys w archiwum.
+    """
+    return _RE_MARTWY_OD_ZE_SPACJA.sub("", extinf)
+
+
 def wczytaj_liste(sciezka: str) -> list[KanalZrodlowy]:
     """Czyta istniejącą playlistę (poprzedni wynik albo archiwum).
 
@@ -1405,7 +1418,7 @@ async def przetworz_liste_async() -> int:
 
         linie = [f'#EXTM3U url-tvg="{EPG_URL}" x-tvg-url="{EPG_URL}"']
         for kanal in wybrane:
-            linie.append(kanal.extinf)
+            linie.append(_usun_date_martwoty(kanal.extinf))
             linie.append(kanal.url)
 
         zapisz_atomowo(OUTPUT_FILE, "\n".join(linie) + "\n")
