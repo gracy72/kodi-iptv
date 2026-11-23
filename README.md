@@ -35,7 +35,7 @@ Workflow `.github/workflows/update.yml`:
 - **Mały/flaky host** — kanał oceniany per sztuka: jedna wpadka zostawia go
   w liście, druga z rzędu przenosi do archiwum.
 - **Archiwum 100 dni** — martwy wpis znika na stałe po 100 dniach bez powodzenia.
-- **Powrót z archiwum** - wpis musi odpowiedzieć **2 razy z rzędu** (domyślnie;
+- **Powrót z archiwum** — wpis musi odpowiedzieć **2 razy z rzędu** (domyślnie;
   zmienna `GRACY_POTWIERDZENIA`), żeby wrócić do listy. Kanał, który „odbija
   się" raz na jakiś czas, nie wraca na listę i nie zeruje licznika 100 dni.
   `GRACY_POTWIERDZENIA=1` przywraca stare zachowanie (wystarczy jedno udane sprawdzenie).
