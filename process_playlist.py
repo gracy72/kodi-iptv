@@ -101,6 +101,12 @@ OUTPUT_FILE = os.environ.get("GRACY_OUTPUT", "gracy.m3u")
 PLIK_ARCHIWUM = os.environ.get("GRACY_ARCHIWUM", "gracy_archiwum.m3u")
 DNI_W_ARCHIWUM = int(os.environ.get("GRACY_DNI_ARCHIWUM", "100"))
 
+# Ile kolejnych udanych sprawdzen musi zaliczyc wpis z archiwum, zeby wrocic do
+# listy. 1 = zachowanie stare (wystarczy jedno udane sprawdzenie). Wyzej chroni
+# przed kanalami, ktore "odbijaja sie" raz na jakis czas i dzieki temu nigdy nie
+# wypadaja z listy ani z archiwum.
+POTWIERDZENIA_POWROTU = max(1, int(os.environ.get("GRACY_POTWIERDZENIA", "2")))
+
 # Kanay wykluczone z aktywnej listy mimo ze serwer odpowiada (np. za wolne,
 # niestabilne - "nie idzie ogladac"). Jedna regula w linii: fragment nazwy
 # (bez wielkosci liter) albo pelny URL. Trafiaja do archiwum, nie do listy.
@@ -292,6 +298,7 @@ class KanalZrodlowy:
     tvg_id: str | None
     zrodlo_pl: bool
     martwy_od: str | None = None  # data (RRRR-MM-DD) - tylko wpisy z archiwum
+    ok_z_rzedu: int = 0  # udane sprawdzenia z rzedu (tylko wpisy z archiwum)
 
 
 @dataclass
@@ -389,14 +396,27 @@ def _martwy_od_z_extinf(extinf: str) -> str | None:
 _RE_MARTWY_OD_ZE_SPACJA = re.compile(r'\s*gracy-martwy-od="[^"]*"')
 
 
-def _usun_date_martwoty(extinf: str) -> str:
-    """Usuwa atrybut gracy-martwy-od z wpisu trafiajacego na liste.
+_RE_OK_Z_RZEDU = re.compile(r'\s*gracy-ok-z-rzedu="(\d+)"')
 
-    Wpis, ktory ozyl, wraca na liste bez daty awarii. Dzieki temu, gdy
-    znow padnie, licznik DNI_W_ARCHIWUM liczy sie od nowej daty, a nie
-    od daty zapisanej kiedys w archiwum.
+
+def _usun_atrybuty_archiwum(extinf: str) -> str:
+    """Usuwa z #EXTINF atrybuty stanu archiwum - aktywna lista ich nie potrzebuje.
+
+    Wpis, ktory ozyl, wraca na liste bez daty awarii i bez licznika potwierdzen,
+    wiec po kolejnej awarii licznik DNI_W_ARCHIWUM startuje od nowej daty.
     """
-    return _RE_MARTWY_OD_ZE_SPACJA.sub("", extinf)
+    return _RE_OK_Z_RZEDU.sub("", _RE_MARTWY_OD_ZE_SPACJA.sub("", extinf))
+
+
+def _ok_z_rzedu_z_extinf(extinf: str) -> int:
+    """Ile kolejnych udanych sprawdzen zaliczyl wpis z archiwum."""
+    dopasowanie = _RE_OK_Z_RZEDU.search(extinf)
+    return int(dopasowanie.group(1)) if dopasowanie else 0
+
+
+def _czeka_na_potwierdzenie(wpis: "KanalZrodlowy", dziala: bool) -> bool:
+    """Czy wpis z archiwum, ktory odpowiedzial, musi jeszcze potwierdzic powrot."""
+    return dziala and wpis.ok_z_rzedu + 1 < POTWIERDZENIA_POWROTU
 
 
 def wczytaj_liste(sciezka: str) -> list[KanalZrodlowy]:
@@ -412,6 +432,7 @@ def wczytaj_liste(sciezka: str) -> list[KanalZrodlowy]:
     kanaly = parsuj_playliste(tekst, True, set())
     for kanal in kanaly:
         kanal.martwy_od = _martwy_od_z_extinf(kanal.extinf)
+        kanal.ok_z_rzedu = _ok_z_rzedu_z_extinf(kanal.extinf)
     return kanaly
 
 
@@ -481,6 +502,7 @@ def zapisz_archiwum(sciezka: str, wpisy: list[KanalZrodlowy]) -> None:
         "#EXTM3U",
         "# Archiwum: kanały, które przestały działać. Sprawdzane przy każdym",
         f"# uruchomieniu; po {DNI_W_ARCHIWUM} dniach bez powodzenia są usuwane na stałe.",
+        f"# Wpis, ktory znow odpowiada, wraca po {POTWIERDZENIA_POWROTU} udanych sprawdzeniach z rzedu.",
     ]
     for wpis in sorted(wpisy, key=lambda w: normalizuj_nazwe(w.nazwa)):
         extinf = wpis.extinf
@@ -490,6 +512,14 @@ def zapisz_archiwum(sciezka: str, wpisy: list[KanalZrodlowy]) -> None:
             )
         else:
             extinf = _wstaw_atrybut(extinf, f'gracy-martwy-od="{wpis.martwy_od}"')
+        if wpis.ok_z_rzedu > 0:
+            atrybut = f'gracy-ok-z-rzedu="{wpis.ok_z_rzedu}"'
+            if _RE_OK_Z_RZEDU.search(extinf):
+                extinf = _RE_OK_Z_RZEDU.sub(lambda _: " " + atrybut, extinf, count=1)
+            else:
+                extinf = _wstaw_atrybut(extinf, atrybut)
+        else:
+            extinf = _RE_OK_Z_RZEDU.sub("", extinf)
         linie.append(extinf)
         linie.append(wpis.url)
     zapisz_atomowo(sciezka, "\n".join(linie) + "\n")
@@ -1188,11 +1218,23 @@ async def przetworz_liste_async() -> int:
             if czy_wykluczony(wpis, wzorce_wykluczen)
         }
 
+        # Flapping: wpis z archiwum, ktory wlasnie odpowiedzial, nie wraca od razu
+        # do listy - musi potwierdzic w kolejnym przebiegu. Bez tego kanal, ktory
+        # "odbija sie" raz na jakis czas, nigdy nie wypadlby z listy.
+        wstrzymane_url = {
+            wpis.url for wpis in archiwum
+            if wpis.url not in preferowane
+            and _czeka_na_potwierdzenie(wpis, wpis.url in dzialajace_url)
+        }
+
         grupy: dict[str, list[tuple[KanalZrodlowy, float]]] = {}
         for wpis, (ok, kbps) in zip(do_testu, wyniki):
             if not ok:
                 continue
             if wpis.url in wykluczone_urls:
+                continue
+            if wpis.url in wstrzymane_url:
+                # archiwum: odpowiedzial, ale musi potwierdzic w kolejnym przebiegu
                 continue
 
             klucz = klucz_stacji(wpis.nazwa, wpis.tvg_id, mapa_epg)
@@ -1293,6 +1335,7 @@ async def przetworz_liste_async() -> int:
         do_archiwum_wykl = 0
         for url, wpis in wykluczone_wpisy.items():
             wpis.martwy_od = daty_archiwum.get(url) or dzisiaj
+            wpis.ok_z_rzedu = 0
             if dni_martwosci(wpis.martwy_od) >= DNI_W_ARCHIWUM:
                 log.info(
                     "   Archiwum: usuwam na stałe %r (martwy od %s)",
@@ -1343,8 +1386,17 @@ async def przetworz_liste_async() -> int:
             if wpis.url in wykluczone_urls:
                 continue  # obsłużone w bloku 0 (wykluczone)
             if wpis.url in dzialajace_url:
+                if wpis.url in wstrzymane_url:
+                    wpis.ok_z_rzedu += 1
+                    log.info(
+                        "   Archiwum: %r odpowiada, czeka na potwierdzenie (%d/%d)",
+                        wpis.nazwa, wpis.ok_z_rzedu, POTWIERDZENIA_POWROTU,
+                    )
+                    archiwum_po[wpis.url] = wpis
+                    continue
                 log.info("   Archiwum: %r znów działa - wraca do listy", wpis.nazwa)
                 continue
+            wpis.ok_z_rzedu = 0  # brak potwierdzenia w tym przebiegu
 
             # kanał z hosta, który w tym przebiegu nie odpowiedział wcale -
             # zostaje w archiwum (nie pokazujemy martwej pozycji w Kodi),
@@ -1418,7 +1470,7 @@ async def przetworz_liste_async() -> int:
 
         linie = [f'#EXTM3U url-tvg="{EPG_URL}" x-tvg-url="{EPG_URL}"']
         for kanal in wybrane:
-            linie.append(_usun_date_martwoty(kanal.extinf))
+            linie.append(_usun_atrybuty_archiwum(kanal.extinf))
             linie.append(kanal.url)
 
         zapisz_atomowo(OUTPUT_FILE, "\n".join(linie) + "\n")
