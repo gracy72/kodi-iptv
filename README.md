@@ -39,8 +39,11 @@ Workflow `.github/workflows/update.yml`:
   zmienna `GRACY_POTWIERDZENIA`), żeby wrócić do listy. Kanał, który „odbija
   się" raz na jakiś czas, nie wraca na listę i nie zeruje licznika 100 dni.
   `GRACY_POTWIERDZENIA=1` przywraca stare zachowanie (wystarczy jedno udane sprawdzenie).
-- **Wykluczenia** (`gracy_wykluczone.txt`) — np. strumień działa, ale się rwie
-  (Sci Fi) → do archiwum, nie do Kodi. Aby przywrócić, usuń linię z pliku.
+- **Odstawione** (`gracy_wykluczone.txt`) - kanały, których na razie nie chcesz:
+  **nie są w ogóle testowane** (oszczędność łącza), nie ma ich w `gracy.m3u`,
+  a w archiwum leżą bez daty i bez zegara 100 dni. Wzorzec = fragment nazwy,
+  fragment `tvg-id` albo pełny URL (bez wielkości liter). Skreślenie linii
+  przywraca normalne sprawdzanie - po 2 udanych przebiegach kanał wraca na listę.
 
 ## Aktualizacja ręczna (program)
 
