@@ -1,4 +1,33 @@
 # Kanały wykluczone z aktywnej listy (trafiają do archiwum, nie do Kodi).
 # Wzorzec = fragment nazwy (bez wielkości liter) albo pełny URL.
-# Przykład: Sci Fi (Poland) - serwer odpowiada, ale strumień się rwie/klatkuje.
-Sci Fi (Poland)
+AmericanCrimeChannel.pl@Poland
+Belsat
+BialogardzkaTelewizjaKablowa.pl@HD
+BuzzfeedUnsolved.pl@FAST
+DrGMedicalExaminer.pl@HD
+EbS.be@SD
+EWTN Polska
+FailArmy.us@Poland
+GloryKickboxing.us@Poland
+Moconomy.pl@SD
+PeopleAreAwesome.us@Poland
+RACERInternational.pl@FAST
+RADIOCLUBDJTV.pl@HD
+RadiowaCzworka.pl@SD
+RakutenViki.us@Poland
+RTGint.ru@SD
+StrongmanChampionsLeague.uk@SD
+TV Biznesowa
+TelewizjaImperium.pl@SD
+TelewizjaiTTV.pl@SD
+TelewizjaJaslo.pl@SD
+TelewizjaLuban.pl@SD
+TelewizjaRegionalnaZary.pl@SD
+ThePetCollective.us@Poland
+TNAWrestlingChannel.pl@SD
+TOPBarca.pl@SD
+TV KUJAWY
+TV OKAZJE
+TV TORUŃ
+WorldBilliards.pl@SD
+WorldPokerTour.us@Poland
