@@ -1,5 +1,10 @@
-# Kanały wykluczone z aktywnej listy (trafiają do archiwum, nie do Kodi).
-# Wzorzec = fragment nazwy (bez wielkości liter) albo pełny URL.
+# Kanały "odstawione" - na razie ich nie chcę:
+#   * nie ma ich w gracy.m3u,
+#   * nie są w ogóle testowane (oszczędność łącza),
+#   * w archiwum leżą bez daty i bez zegara 100 dni (parking, nie śmierć).
+# Skreślenie linii przywraca normalne sprawdzanie - po 2 udanych przebiegach
+# z rzędu kanał wraca na listę.
+# Wzorzec = fragment nazwy LUB tvg-id (bez wielkości liter) albo pełny URL.
 AmericanCrimeChannel.pl@Poland
 Belsat
 BialogardzkaTelewizjaKablowa.pl@HD

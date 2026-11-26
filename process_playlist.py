@@ -32,9 +32,11 @@ Względem wersji pierwotnej poprawiono m.in.:
   * kanały, które przestały działać, trafiają do gracy_archiwum.m3u z datą
     awarii; archiwum jest sprawdzane przy każdym uruchomieniu (działające wracają
     do listy), a po DNI_W_ARCHIWUM dniach martwy wpis jest usuwany na stałe,
-  * kanały z hostów CAŁKOWICIE nieosiągalnych oraz wpisy z gracy_wykluczone.txt
-    NIE trafiają do aktywnej listy - idą do archiwum (wracają, gdy host znów
-    odpowie albo gdy usunie się wpis z pliku wykluczeń),
+  * kanały z hostów CAŁKOWICIE nieosiągalnych NIE trafiają do aktywnej listy -
+    idą do archiwum i wracają, gdy host znów odpowie,
+  * wpisy z gracy_wykluczone.txt są "odstawione": nie testujemy ich w ogóle,
+    nie ma ich na liście, a w archiwum leżą bez daty i bez zegara
+    DNI_W_ARCHIWUM - skreślenie linii przywraca normalne sprawdzanie,
   * tryb lokalny: uruchomienie z GRACY_PUSH=1 wgrywa gotową listę na GitHub przez
     API (token w GITHUB_TOKEN albo w pliku github_token.txt) - to pozwala tworzyć
     listę z polskiego adresu IP, bo TVP wydaje adresy strumieni tylko dla Polski,
@@ -299,6 +301,7 @@ class KanalZrodlowy:
     zrodlo_pl: bool
     martwy_od: str | None = None  # data (RRRR-MM-DD) - tylko wpisy z archiwum
     ok_z_rzedu: int = 0  # udane sprawdzenia z rzedu (tylko wpisy z archiwum)
+    odstawiony: bool = False  # parking: wpis z gracy_wykluczone.txt
 
 
 @dataclass
@@ -398,6 +401,8 @@ _RE_MARTWY_OD_ZE_SPACJA = re.compile(r'\s*gracy-martwy-od="[^"]*"')
 
 _RE_OK_Z_RZEDU = re.compile(r'\s*gracy-ok-z-rzedu="(\d+)"')
 
+_RE_ODSTAWIOWY = re.compile(r'\s*gracy-odstawiony="[^"]*"')
+
 
 def _usun_atrybuty_archiwum(extinf: str) -> str:
     """Usuwa z #EXTINF atrybuty stanu archiwum - aktywna lista ich nie potrzebuje.
@@ -405,13 +410,19 @@ def _usun_atrybuty_archiwum(extinf: str) -> str:
     Wpis, ktory ozyl, wraca na liste bez daty awarii i bez licznika potwierdzen,
     wiec po kolejnej awarii licznik DNI_W_ARCHIWUM startuje od nowej daty.
     """
-    return _RE_OK_Z_RZEDU.sub("", _RE_MARTWY_OD_ZE_SPACJA.sub("", extinf))
+    bez_daty = _RE_MARTWY_OD_ZE_SPACJA.sub("", extinf)
+    return _RE_ODSTAWIOWY.sub("", _RE_OK_Z_RZEDU.sub("", bez_daty))
 
 
 def _ok_z_rzedu_z_extinf(extinf: str) -> int:
     """Ile kolejnych udanych sprawdzen zaliczyl wpis z archiwum."""
     dopasowanie = _RE_OK_Z_RZEDU.search(extinf)
     return int(dopasowanie.group(1)) if dopasowanie else 0
+
+
+def _odstawiony_z_extinf(extinf: str) -> bool:
+    """Czy wpis jest odstawiony (parking z gracy_wykluczone.txt)."""
+    return bool(_RE_ODSTAWIOWY.search(extinf))
 
 
 def _czeka_na_potwierdzenie(wpis: "KanalZrodlowy", dziala: bool) -> bool:
@@ -433,6 +444,7 @@ def wczytaj_liste(sciezka: str) -> list[KanalZrodlowy]:
     for kanal in kanaly:
         kanal.martwy_od = _martwy_od_z_extinf(kanal.extinf)
         kanal.ok_z_rzedu = _ok_z_rzedu_z_extinf(kanal.extinf)
+        kanal.odstawiony = _odstawiony_z_extinf(kanal.extinf)
     return kanaly
 
 
@@ -472,14 +484,20 @@ def wczytaj_wykluczone(sciezka: str) -> list[str]:
 
 
 def czy_wykluczony(wpis: "KanalZrodlowy", wzorce: list[str]) -> bool:
+    """Czy wpis jest "odstawiony" (gracy_wykluczone.txt).
+
+    Wzorzec to fragment nazwy, fragment tvg-id (tak jak w EPG, np.
+    "TVP1.pl@SD") albo pelny URL - bez wielkosci liter.
+    """
     if not wzorce:
         return False
     nazwa = (wpis.nazwa or "").lower()
+    tvg_id = (wpis.tvg_id or "").lower()
     for wzor in wzorce:
         if wzor.startswith("http"):
             if wpis.url == wzor:
                 return True
-        elif wzor in nazwa:
+        elif wzor in nazwa or (tvg_id and wzor in tvg_id):
             return True
     return False
 
@@ -503,15 +521,20 @@ def zapisz_archiwum(sciezka: str, wpisy: list[KanalZrodlowy]) -> None:
         "# Archiwum: kanały, które przestały działać. Sprawdzane przy każdym",
         f"# uruchomieniu; po {DNI_W_ARCHIWUM} dniach bez powodzenia są usuwane na stałe.",
         f"# Wpis, ktory znow odpowiada, wraca po {POTWIERDZENIA_POWROTU} udanych sprawdzeniach z rzedu.",
+        "# Wpisy z gracy_wykluczone.txt (gracy-odstawiony) leza bez daty i bez zegara 100 dni.",
     ]
     for wpis in sorted(wpisy, key=lambda w: normalizuj_nazwe(w.nazwa)):
         extinf = wpis.extinf
-        if _RE_MARTWY_OD.search(extinf):
-            extinf = _RE_MARTWY_OD.sub(
-                lambda _: f'gracy-martwy-od="{wpis.martwy_od}"', extinf, count=1
-            )
+        if wpis.martwy_od:
+            if _RE_MARTWY_OD.search(extinf):
+                extinf = _RE_MARTWY_OD.sub(
+                    lambda _: f'gracy-martwy-od="{wpis.martwy_od}"', extinf, count=1
+                )
+            else:
+                extinf = _wstaw_atrybut(extinf, f'gracy-martwy-od="{wpis.martwy_od}"')
         else:
-            extinf = _wstaw_atrybut(extinf, f'gracy-martwy-od="{wpis.martwy_od}"')
+            # odstawiony: bez daty awarii, wiec bez zegara 100 dni
+            extinf = _RE_MARTWY_OD_ZE_SPACJA.sub("", extinf)
         if wpis.ok_z_rzedu > 0:
             atrybut = f'gracy-ok-z-rzedu="{wpis.ok_z_rzedu}"'
             if _RE_OK_Z_RZEDU.search(extinf):
@@ -520,6 +543,13 @@ def zapisz_archiwum(sciezka: str, wpisy: list[KanalZrodlowy]) -> None:
                 extinf = _wstaw_atrybut(extinf, atrybut)
         else:
             extinf = _RE_OK_Z_RZEDU.sub("", extinf)
+        if wpis.odstawiony:
+            if _RE_ODSTAWIOWY.search(extinf):
+                extinf = _RE_ODSTAWIOWY.sub(lambda _: ' gracy-odstawiony="1"', extinf, count=1)
+            else:
+                extinf = _wstaw_atrybut(extinf, 'gracy-odstawiony="1"')
+        else:
+            extinf = _RE_ODSTAWIOWY.sub("", extinf)
         linie.append(extinf)
         linie.append(wpis.url)
     zapisz_atomowo(sciezka, "\n".join(linie) + "\n")
@@ -1183,12 +1213,20 @@ async def przetworz_liste_async() -> int:
             len(poprzednie), len(dodatkowe), len(archiwum), len(ze_zrodel),
         )
 
-        # testujemy wszystko: poprzednia lista + dodatkowe + archiwum + źródła
+        # odstawione (gracy_wykluczone.txt): nie testujemy ich w ogole
+        wykluczone_urls = {
+            wpis.url for wpis in baza + archiwum + ze_zrodel
+            if czy_wykluczony(wpis, wzorce_wykluczen)
+        }
+
+        # testujemy reszte: poprzednia lista + dodatkowe + archiwum + źródła
         do_testu: list[KanalZrodlowy] = []
         widziane: set[str] = set()
         for wpis in baza + archiwum + ze_zrodel:
             if not wpis.url or wpis.url in widziane:
                 continue
+            if wpis.url in wykluczone_urls:
+                continue  # odstawiony: nie sprawdzamy strumienia
             widziane.add(wpis.url)
             do_testu.append(wpis)
 
@@ -1211,11 +1249,6 @@ async def przetworz_liste_async() -> int:
         preferowane = {wpis.url for wpis in baza}
         dzialajace_url = {
             wpis.url for wpis, (ok, _) in zip(do_testu, wyniki) if ok
-        }
-
-        wykluczone_urls = {
-            wpis.url for wpis in baza + archiwum + ze_zrodel
-            if czy_wykluczony(wpis, wzorce_wykluczen)
         }
 
         # Flapping: wpis z archiwum, ktory wlasnie odpowiedzial, nie wraca od razu
@@ -1327,24 +1360,20 @@ async def przetworz_liste_async() -> int:
         usuniete = 0
         zawieszone = 0
 
-        # 0) kanały z pliku wykluczeń: zawsze do archiwum, nigdy do listy
+        # 0) kanały "odstawione" (gracy_wykluczone.txt): nie testowane, nie na
+        #    liście, ale URL zostaje w archiwum jako parking - bez daty i bez
+        #    zegara DNI_W_ARCHIWUM. Skreślenie linii przywraca normalne zasady.
         wykluczone_wpisy: dict[str, KanalZrodlowy] = {}
-        for wpis in baza + archiwum + ze_zrodel:
+        for wpis in baza + archiwum:  # tylko swoje - nie parkujemy URL-i ze źródeł
             if wpis.url in wykluczone_urls and wpis.url not in wykluczone_wpisy:
                 wykluczone_wpisy[wpis.url] = wpis
-        do_archiwum_wykl = 0
+        odstawione = 0
         for url, wpis in wykluczone_wpisy.items():
-            wpis.martwy_od = daty_archiwum.get(url) or dzisiaj
+            wpis.odstawiony = True
+            wpis.martwy_od = None
             wpis.ok_z_rzedu = 0
-            if dni_martwosci(wpis.martwy_od) >= DNI_W_ARCHIWUM:
-                log.info(
-                    "   Archiwum: usuwam na stałe %r (martwy od %s)",
-                    wpis.nazwa, wpis.martwy_od,
-                )
-                usuniete += 1
-                continue
             archiwum_po[url] = wpis
-            do_archiwum_wykl += 1
+            odstawione += 1
 
         do_archiwum_host = 0
 
@@ -1385,6 +1414,7 @@ async def przetworz_liste_async() -> int:
         for wpis in archiwum:
             if wpis.url in wykluczone_urls:
                 continue  # obsłużone w bloku 0 (wykluczone)
+            wpis.odstawiony = False  # linia skreslona: wpis wraca do normalnych zasad
             if wpis.url in dzialajace_url:
                 if wpis.url in wstrzymane_url:
                     wpis.ok_z_rzedu += 1
@@ -1417,8 +1447,10 @@ async def przetworz_liste_async() -> int:
 
             if not wpis.martwy_od:
                 wpis.martwy_od = dzisiaj
-                # pierwszy dzień awarii - kanał zostaje w liście
-                if wpis.url not in archiwum_po:
+                # pierwszy dzień awarii: do listy wracamy tylko wtedy, gdy kanał
+                # już tam był (żeby nie migotał); wpis spoza listy - np. po
+                # odstawieniu - dostaje datę i czeka w archiwum
+                if wpis.url in preferowane and wpis.url not in archiwum_po:
                     zawieszone += 1
                     dodaj_do_listy(wpis)
             if dni_martwosci(wpis.martwy_od) >= DNI_W_ARCHIWUM:
@@ -1435,10 +1467,10 @@ async def przetworz_liste_async() -> int:
                 "   Hosty niedostępne: %d kanałów przeniesiono do archiwum (bez listy)",
                 do_archiwum_host,
             )
-        if do_archiwum_wykl:
+        if odstawione:
             log.info(
-                "   Wykluczone: %d kanałów w archiwum (nie pokazywane w liście)",
-                do_archiwum_wykl,
+                "   Odstawione: %d kanałów (nie testowane, parking w archiwum)",
+                odstawione,
             )
         if zawieszone:
             log.info(
