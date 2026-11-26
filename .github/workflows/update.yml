@@ -38,11 +38,14 @@ jobs:
         run: |
           # Zabezpieczenie: nie nadpisujemy listy, jezeli nowa ma mniej niz
           # 85% kanalow starej (to oznaka awarii zrodel, nie normalnej
-          # zmiany). Drobne wahania (kilka kanalow) przechodza normalnie.
+          # zmiany). Kanaly "odstawione" (gracy_wykluczone.txt) nie licza sie
+          # do progu - ich znikniecie z listy jest zamierzone.
           STARE=$(git show HEAD:gracy.m3u 2>/dev/null | grep -c '^#EXTINF' || echo 0)
+          ODST=$(git show HEAD:gracy.m3u 2>/dev/null | python -c 'import sys, process_playlist as p; wz = p.wczytaj_wykluczone(p.PLIK_WYKLUCZONE); k = p.parsuj_playliste(sys.stdin.read(), True, set()); print(sum(1 for x in k if p.czy_wykluczony(x, wz)))' 2>/dev/null) || ODST=0
+          ODST=${ODST:-0}
           NOWE=$(grep -c '^#EXTINF' gracy.m3u || echo 0)
-          PROG=$((STARE * 85 / 100))
-          echo "kanaly w repo: $STARE, wygenerowane: $NOWE, prog 85%: $PROG"
+          PROG=$(( (STARE - ODST) * 85 / 100 ))
+          echo "kanaly w repo: $STARE (odstawione: $ODST), wygenerowane: $NOWE, prog 85%: $PROG"
           if [ "$NOWE" -lt "$PROG" ]; then
             echo "Spadek ponizej 85% - przywracam wersje z repo (bez zmiany)"
             git checkout -- gracy.m3u gracy_archiwum.m3u
