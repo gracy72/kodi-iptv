@@ -1,0 +1,9 @@
+# Mapowanie nazw kanałów: "jak kanał ma się nazywać".
+# Format: oryginalna nazwa <TAB> docelowa nazwa [<TAB> docelowy tvg-id]
+# Podmieniana jest nazwa ORAZ tvg-id (tvg-id = docelowa nazwa, gdy 3. kolumny
+# nie ma). Dzięki temu nazwy z dziwnymi dodatkami ("... Rebulid", "... PL")
+# trafiają w EPG. Plik jedzie do repozytorium, więc działa też w GitHub Actions.
+# Brak pliku = nazwy bez zmian.
+#
+# Przykład (tabulator między kolumnami):
+# ATM Rozrywka Rebulid	ATM Rozrywka
