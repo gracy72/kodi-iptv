@@ -114,6 +114,12 @@ POTWIERDZENIA_POWROTU = max(1, int(os.environ.get("GRACY_POTWIERDZENIA", "2")))
 # (bez wielkosci liter) albo pelny URL. Trafiaja do archiwum, nie do listy.
 PLIK_WYKLUCZONE = os.environ.get("GRACY_WYKLUCZONE", "gracy_wykluczone.txt")
 
+# Mapowanie nazw kanalow (gracy_mapowanie.txt): oryginalna nazwa -> nazwa
+# docelowa (+ opcjonalnie tvg-id). Podmiana dzieje sie przy parsowaniu
+# playlisty, wiec dziala tez na wpisach z poprzedniej listy i z archiwum.
+# Brak pliku = zero zmian w zachowaniu programu.
+PLIK_MAPOWANIE = os.environ.get("GRACY_MAPOWANIE", "gracy_mapowanie.txt")
+
 # Własne kanały, których nie ma (chwilowo) w źródłach - próbowane przy każdym
 # uruchomieniu, tak samo jak kanały z poprzedniej listy.
 PLIK_DODATKOWE = os.environ.get("GRACY_DODATKOWE", "gracy_dodatkowe.m3u")
@@ -302,6 +308,9 @@ class KanalZrodlowy:
     martwy_od: str | None = None  # data (RRRR-MM-DD) - tylko wpisy z archiwum
     ok_z_rzedu: int = 0  # udane sprawdzenia z rzedu (tylko wpisy z archiwum)
     odstawiony: bool = False  # parking: wpis z gracy_wykluczone.txt
+    # nazwa i tvg-id sprzed mapowania - zeby wzorce wykluczen dalej dzialaly
+    nazwa_oryginalna: str = ""
+    tvg_id_oryginalny: str | None = None
 
 
 @dataclass
@@ -347,6 +356,88 @@ def _tvg_id_z_extinf(extinf: str) -> str | None:
     return wartosc or None
 
 
+# --- Mapowanie nazw (gracy_mapowanie.txt) ---------------------------------
+# Format linii:  oryginalna nazwa <TAB> docelowa nazwa [<TAB> docelowy tvg-id]
+# Dopuszczalne tez "oryginalna -> docelowa". Mapowanie nadpisuje ZAROWNO nazwe
+# wyswietlana, JAK I tvg-id wpisu - dzieki temu "ATM Rozrywka Rebulid" staje
+# sie "ATM Rozrywka" jeszcze przed grupowaniem i dopasowaniem EPG.
+MAPA_NAZW: dict[str, tuple[str, str]] = {}
+
+
+def wczytaj_mapowanie(sciezka: str) -> dict[str, tuple[str, str]]:
+    """Czyta gracy_mapowanie.txt; klucz = znormalizowana nazwa zrodlowa."""
+    mapa: dict[str, tuple[str, str]] = {}
+    try:
+        with open(sciezka, encoding="utf-8") as plik:
+            for linia in plik:
+                linia = linia.strip()
+                if not linia or linia.startswith("#"):
+                    continue
+                czesci = [czesc.strip() for czesc in linia.split("\t")]
+                czesci = [czesc for czesc in czesci if czesc]
+                if len(czesci) < 2:
+                    if "->" not in linia:
+                        continue
+                    czesci = [czesc.strip() for czesc in linia.split("->", 1)]
+                    if len(czesci) != 2 or not all(czesci):
+                        continue
+                zrodlo, cel = czesci[0], czesci[1]
+                tvg = czesci[2] if len(czesci) > 2 else cel
+                klucz = normalizuj_nazwe(zrodlo)
+                if klucz:
+                    mapa[klucz] = (cel, tvg)
+    except OSError:
+        return {}
+    return mapa
+
+
+def ustaw_mapowanie(mapa: dict[str, tuple[str, str]] | None) -> None:
+    """Ustawia mape uzywana przy parsowaniu playlist (None = wylacz)."""
+    MAPA_NAZW.clear()
+    if mapa:
+        MAPA_NAZW.update(mapa)
+
+
+def _ustaw_nazwe(extinf: str, nazwa: str) -> str:
+    """Podmienia nazwe kanalu: tekst po pierwszym przecinku poza cudzyslowem."""
+    w_cudzyslowie = False
+    for indeks, znak in enumerate(extinf):
+        if znak == '"':
+            w_cudzyslowie = not w_cudzyslowie
+        elif znak == "," and not w_cudzyslowie:
+            return extinf[: indeks + 1] + nazwa
+    return extinf
+
+
+def _ustaw_tvg_id(extinf: str, wartosc: str) -> str:
+    """Podmienia (albo dopisuje) tvg-id w #EXTINF."""
+    if _RE_TVG_ID.search(extinf):
+        return _RE_TVG_ID.sub(lambda _: f'tvg-id="{wartosc}"', extinf, count=1)
+    if extinf.startswith("#EXTINF:"):
+        return re.sub(
+            r"^#EXTINF:\s*([-0-9.]+)",
+            lambda dopasowanie: f'#EXTINF:{dopasowanie.group(1)} tvg-id="{wartosc}"',
+            extinf,
+            count=1,
+        )
+    return extinf
+
+
+def _zastosuj_mapowanie(
+    extinf: str, nazwa: str, tvg_id: str | None
+) -> tuple[str, str, str | None]:
+    """Podmienia nazwe i tvg-id wpisu wedlug gracy_mapowanie.txt."""
+    if not MAPA_NAZW:
+        return extinf, nazwa, tvg_id
+    cel = MAPA_NAZW.get(normalizuj_nazwe(nazwa))
+    if cel is None and tvg_id:
+        cel = MAPA_NAZW.get(normalizuj_nazwe(tvg_id))
+    if cel is None:
+        return extinf, nazwa, tvg_id
+    nowa_nazwa, nowy_tvg = cel
+    return _ustaw_tvg_id(_ustaw_nazwe(extinf, nowa_nazwa), nowy_tvg), nowa_nazwa, nowy_tvg
+
+
 def parsuj_playliste(
     tekst: str, zrodlo_pl: bool, widziane_url: set[str]
 ) -> list[KanalZrodlowy]:
@@ -374,13 +465,18 @@ def parsuj_playliste(
             extinf = None
             continue
         widziane_url.add(linia)
+        nazwa = _nazwa_z_extinf(extinf)
+        tvg_id = _tvg_id_z_extinf(extinf)
+        extinf_m, nazwa_m, tvg_id_m = _zastosuj_mapowanie(extinf, nazwa, tvg_id)
         kanaly.append(
             KanalZrodlowy(
-                extinf=extinf,
+                extinf=extinf_m,
                 url=linia,
-                nazwa=_nazwa_z_extinf(extinf),
-                tvg_id=_tvg_id_z_extinf(extinf),
+                nazwa=nazwa_m,
+                tvg_id=tvg_id_m,
                 zrodlo_pl=zrodlo_pl,
+                nazwa_oryginalna=nazwa,
+                tvg_id_oryginalny=tvg_id,
             )
         )
         extinf = None
@@ -491,13 +587,23 @@ def czy_wykluczony(wpis: "KanalZrodlowy", wzorce: list[str]) -> bool:
     """
     if not wzorce:
         return False
-    nazwa = (wpis.nazwa or "").lower()
-    tvg_id = (wpis.tvg_id or "").lower()
+    nazwy = [
+        wartosc.lower()
+        for wartosc in (wpis.nazwa, wpis.nazwa_oryginalna)
+        if wartosc
+    ]
+    tvg_ids = [
+        wartosc.lower()
+        for wartosc in (wpis.tvg_id, wpis.tvg_id_oryginalny)
+        if wartosc
+    ]
     for wzor in wzorce:
         if wzor.startswith("http"):
             if wpis.url == wzor:
                 return True
-        elif wzor in nazwa or (tvg_id and wzor in tvg_id):
+        elif any(wzor in wartosc for wartosc in nazwy):
+            return True
+        elif any(wzor in wartosc for wartosc in tvg_ids):
             return True
     return False
 
@@ -1182,6 +1288,10 @@ def _wgraj_plik(sciezka: str, token: str) -> None:
 
 async def przetworz_liste_async() -> int:
     wzorce_wykluczen = wczytaj_wykluczone(PLIK_WYKLUCZONE)
+    mapa_nazw = wczytaj_mapowanie(PLIK_MAPOWANIE)
+    ustaw_mapowanie(mapa_nazw)
+    if mapa_nazw:
+        log.info("0. Mapowanie nazw: %d regul z %s", len(mapa_nazw), PLIK_MAPOWANIE)
     zlacze = aiohttp.TCPConnector(limit=MAX_ROWNOLOGE * 2, limit_per_host=MAX_NA_HOST)
 
     async with aiohttp.ClientSession(connector=zlacze) as session:
@@ -1509,7 +1619,14 @@ async def przetworz_liste_async() -> int:
         zapisz_archiwum(PLIK_ARCHIWUM, list(archiwum_po.values()))
 
         if os.environ.get("GRACY_PUSH", "").strip().lower() in ("1", "true", "tak", "yes"):
-            wgraj_na_github(OUTPUT_FILE, PLIK_ARCHIWUM)
+            # gracy_wykluczone.txt i gracy_mapowanie.txt jedza do repo razem z
+            # lista, zeby nocna aktualizacja w chmurze uzywala tych samych
+            # decyzji co reczna (mapowanie zmienia nazwy, wykluczenia - sklad).
+            do_wgrania = [OUTPUT_FILE, PLIK_ARCHIWUM]
+            for opcjonalny in (PLIK_WYKLUCZONE, PLIK_MAPOWANIE):
+                if os.path.exists(opcjonalny):
+                    do_wgrania.append(opcjonalny)
+            wgraj_na_github(*do_wgrania)
 
         log.info(
             "Sukces: %d kanałów w %s (MUX Wrocław: %d), %d w archiwum "
