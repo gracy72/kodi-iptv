@@ -5,5 +5,9 @@
 # trafiają w EPG. Plik jedzie do repozytorium, więc działa też w GitHub Actions.
 # Brak pliku = nazwy bez zmian.
 #
-# Przykład (tabulator między kolumnami):
-# ATM Rozrywka Rebulid	ATM Rozrywka
+# Przykład:
+# ATM Rozrywka Rebulid<TAB>ATM Rozrywka
+Cinemax 2 Central Europe	Cinemax 2
+Cinemax Central Europe	Cinemax
+BabyFirst (720p)	BabyFirst
+Cartoonito CEE Poland (1080p)	Cartoonito
