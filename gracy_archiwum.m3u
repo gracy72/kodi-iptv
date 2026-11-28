@@ -5,6 +5,8 @@
 # Wpisy z gracy_wykluczone.txt (gracy-odstawiony) leza bez daty i bez zegara 100 dni.
 #EXTINF:-1 gracy-martwy-od="2026-10-30" tvg-id="13 Ulica" tvg-logo="https://i.imgur.com/0gCNnLq.png" group-title="Entertainment",13 Ulica (1080p)
 http://57.128.231.171:8080/325/index.m3u8
+#EXTINF:-1 gracy-martwy-od="2026-11-28" tvg-id="4FUN DANCE" tvg-logo="https://i.imgur.com/ZEWHe1B.png" group-title="Music",4 Fun Dance
+http://92.114.85.87:8018/play/a00k/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-11-23" tvg-id="4FUN TV" tvg-logo="https://i.imgur.com/rI1wo2l.png" group-title="Music",4 Fun TV
 https://stream.4fun.tv:8888/sd/4fun_sd_high.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-30" tvg-id="Active Family" tvg-logo="https://i.imgur.com/I1wdWAo.png" group-title="Family",Active Family HD (1080i)
@@ -95,7 +97,7 @@ http://92.114.85.87:8002/play/a00e/index.m3u8
 http://92.114.85.87:8016/play/a005/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-29" tvg-id="Eska TV" tvg-logo="https://i.imgur.com/N0eH0Cg.png" group-title="Music",Eska TV (1080p)
 http://92.114.85.87:8018/play/a00h/index.m3u8
-#EXTINF:-1 gracy-ok-z-rzedu="1" gracy-martwy-od="2026-10-30" tvg-id="Eska TV Extra" tvg-logo="https://i.imgur.com/pZAFshQ.png" group-title="Music",Eska TV Extra (1080p)
+#EXTINF:-1 gracy-martwy-od="2026-10-30" tvg-id="Eska TV Extra" tvg-logo="https://i.imgur.com/pZAFshQ.png" group-title="Music",Eska TV Extra (1080p)
 http://92.114.85.87:8016/play/a008/index.m3u8
 #EXTINF:-1 gracy-odstawiony="1" tvg-id="Euronews Polska" tvg-logo="https://images-2.rakuten.tv/storage/global-live-channel/translation/artwork/bc84c3b7-6008-4ee3-8f6a-e4bb4365f082-width200-quality90.jpeg" group-title="News",Euronews (720p)
 https://cdn-euronews.akamaized.net/live/eds/euronews-pl/26382/index.m3u8
@@ -159,6 +161,8 @@ http://92.114.85.87:8016/play/a003/index.m3u8
 http://92.114.85.87:8006/play/a00a/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-28" tvg-id="Newsmax Polska" tvg-logo="https://i.imgur.com/2NhPCrY.png" group-title="News",Newsmax Polska (576i)
 http://92.114.85.87:8014/play/a006/index.m3u8
+#EXTINF:-1 gracy-martwy-od="2026-11-28" tvg-id="BBC World News" tvg-logo="https://provider-static.plex.tv/epg/cms/production/2e3bf0d9-3ca6-4f65-b1d4-f180ef725d96/NewsWorld_logo_dark_-_Angela_Chan.png" group-title="News",NewsWorld (1080p)
+https://amg01076-lightning-amg01076c5-rakuten-us-1788.playouts.now.amagi.tv/playlist/amg01076-lightning-newsworld-rakutenus/playlist.m3u8
 #EXTINF:-1 gracy-odstawiony="1" tvg-id="NEW TV" tvg-logo="https://i.imgur.com/fH8rKs3.png" group-title="General",NewTV (1080p)
 https://1409502578.rsc.cdn77.org/live/stream-1/chunklist.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-11-27" tvg-id="Nickelodeon" tvg-logo="https://i.imgur.com/E84jnP8.png" group-title="Kids",Nickelodeon (Poland) (576i)
@@ -175,6 +179,8 @@ https://guard.sekobes.workers.dev/?url=https://vuvuu-geil-m3u8.yaskar661.workers
 http://57.128.210.196:8080/212/index.m3u8
 #EXTINF:-1 gracy-odstawiony="1" tvg-id="PeopleAreAwesome.us@Poland" tvg-logo="https://i.imgur.com/MsIx7Ax.png" group-title="Entertainment",People Are Awesome Poland (720p)
 https://3ab76e42.wurl.com/master/f36d25e7e52f1ba8d7e56eb859c636563214f541/UmFrdXRlblRWLWV1X1Blb3BsZUFyZUF3ZXNvbWVfSExT/playlist.m3u8
+#EXTINF:-1 gracy-martwy-od="2026-11-28" tvg-id="Polonia 1" tvg-logo="https://i.imgur.com/4TVDMGD.png" group-title="Undefined",Polonia 1 (576i)
+http://92.114.85.87:8012/play/a006/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-30" tvg-id="Polo TV" tvg-logo="https://i.imgur.com/GEJZjRB.png" group-title="Undefined",Polo TV (1080p)
 http://57.128.210.196:8080/210/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-30" tvg-id="Polsat" tvg-logo="https://i.imgur.com/xff6zGN.png" group-title="General",Polsat (1080p)
@@ -231,8 +237,6 @@ http://213.91.179.28:8000/play/a0bw
 http://92.114.85.87:8003/play/a007/index.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-28" tvg-id="Stars TV" tvg-logo="https://i.imgur.com/NdITPCk.png" group-title="Undefined",Stars TV (1080p)
 http://92.114.85.87:8001/play/a00o/index.m3u8
-#EXTINF:-1 gracy-martwy-od="2026-11-27" tvg-id="Stopklatka TV" tvg-logo="https://i.imgur.com/qqNsIkx.png" group-title="Undefined",Stopklatka TV
-http://92.114.85.87:8018/play/a004/index.m3u8
 #EXTINF:-1 gracy-odstawiony="1" tvg-id="StrongmanChampionsLeague.uk@SD" tvg-logo="https://images-0.rakuten.tv/storage/global-live-channel/translation/artwork/30ccc088-dca7-4458-ad5a-328fef06e1ca-width200-quality90.png" group-title="Sports",Strongman Champions League (720p)
 https://rightsboosterltd-scl-1-be.samsung.wurl.tv/playlist.m3u8
 #EXTINF:-1 gracy-martwy-od="2026-10-30" tvg-id="Sundance TV" tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/0/01/SundanceTV_2014.svg/960px-SundanceTV_2014.svg.png" group-title="Movies",Sundance TV (Poland) (576i)
@@ -337,3 +341,5 @@ https://9a81dd4ee3884d0dbcacafaf0d81327a.mediatailor.us-east-1.amazonaws.com/v1/
 https://d39g1vxj2ef6in.cloudfront.net/v1/master/3fec3e5cac39a52b2132f9c66c83dae043dc17d4/prod-rakuten-stitched/playlist.m3u8?ads.xumo_channelId=88883102
 #EXTINF:-1 gracy-martwy-od="2026-10-30" tvg-id="Wydarzenia 24" tvg-logo="https://i.imgur.com/uYpUnHP.png" group-title="News",Wydarzenia 24 (576i)
 http://92.114.85.87:8016/play/a007/index.m3u8
+#EXTINF:-1 gracy-martwy-od="2026-11-28" tvg-id="ZOOM TV" tvg-logo="https://i.imgur.com/UtZM4zm.png" group-title="Undefined",Zoom TV (576i)
+http://92.114.85.87:8001/play/a00y/index.m3u8
